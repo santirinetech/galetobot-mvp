@@ -1,0 +1,15 @@
+{
+  "name": "galetobot-mvp",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n API,WEB \"npm run dev -w apps/api\" \"npm run dev -w apps/web\"",
+    "start": "npm run start -w apps/api",
+    "build": "npm run build -w apps/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

@@ -1,0 +1,28 @@
+# Dependências
+node_modules/
+
+# Credenciais e configurações privadas
+.env
+.env.*
+!.env.example
+
+# Sessões WhatsApp e backups
+whatsapp-session*/
+**/whatsapp-session*/
+
+# Banco de dados e dados locais
+apps/api/data/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+
+# Arquivos gerados
+apps/web/dist/
+coverage/
+*.log
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+*.bak
