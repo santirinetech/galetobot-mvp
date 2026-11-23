@@ -5,15 +5,13 @@ dotenv.config({
 });
 
 import express from 'express';
-import Database from 'better-sqlite3';
 import bcrypt from 'bcryptjs';
+import { initializeDatabase } from './database.js';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
 
 const app = express();
 app.disable('x-powered-by');
@@ -21,23 +19,12 @@ app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: '100kb' }));
 app.use(cookieParser());
 const origin = process.env.APP_ORIGIN || 'http://localhost:5173';
-const dbdir = path.resolve('apps/api/data'); fs.mkdirSync(dbdir, { recursive: true });
-const db = new Database(path.join(dbdir, 'galeto-dev.db'));
-db.pragma('journal_mode = WAL'); db.pragma('foreign_keys = ON');
-db.exec(`
-CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL,expires_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS products(id INTEGER PRIMARY KEY,name TEXT NOT NULL,price_cents INTEGER NOT NULL CHECK(price_cents>=0),stock INTEGER NOT NULL CHECK(stock>=0),active INTEGER NOT NULL DEFAULT 1);
-CREATE TABLE IF NOT EXISTS customers(id INTEGER PRIMARY KEY,phone TEXT UNIQUE NOT NULL,name TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS orders(id INTEGER PRIMARY KEY,customer_id INTEGER,source TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'confirmed',total_cents INTEGER NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,external_key TEXT UNIQUE,FOREIGN KEY(customer_id) REFERENCES customers(id));
-CREATE TABLE IF NOT EXISTS order_items(id INTEGER PRIMARY KEY,order_id INTEGER NOT NULL,product_id INTEGER NOT NULL,quantity INTEGER NOT NULL,unit_price_cents INTEGER NOT NULL,FOREIGN KEY(order_id) REFERENCES orders(id),FOREIGN KEY(product_id) REFERENCES products(id));
-CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,action TEXT NOT NULL,detail TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-`);
-const initial = [['Galeto', 4500, 10], ['Feijão tropeiro', 1200, 5], ['Arroz', 800, 8], ['Salpicão', 1000, 2]];
-if (db.prepare('SELECT COUNT(*) n FROM products').get().n === 0) { const add = db.prepare('INSERT INTO products(name,price_cents,stock) VALUES(?,?,?)'); db.transaction(() => initial.forEach(x => add.run(...x)))(); }
-const email = process.env.ADMIN_EMAIL, password = process.env.ADMIN_PASSWORD;
-if (!email || !password || password === 'ALTERE_PARA_UMA_SENHA_FORTE' || password.length < 12) { console.error('Configure ADMIN_EMAIL e ADMIN_PASSWORD forte (mín. 12 caracteres) no .env'); process.exit(1); }
-if (!db.prepare('SELECT id FROM users WHERE email=?').get(email)) { db.prepare('INSERT INTO users(email,password_hash) VALUES(?,?)').run(email, bcrypt.hashSync(password, 12)); }
+const db = initializeDatabase({
+    databasePath: process.env.DATABASE_PATH,
+    allowCreate: process.env.NODE_ENV !== 'production' && process.env.DATABASE_ALLOW_CREATE === '1',
+    email: process.env.ADMIN_EMAIL,
+    password: process.env.ADMIN_PASSWORD
+});
 const hash = x => crypto.createHash('sha256').update(x).digest('hex');
 const token = () => crypto.randomBytes(32).toString('hex');
 const fail = (res, e) => res.status(400).json({ error: e });

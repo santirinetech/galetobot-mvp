@@ -16,6 +16,10 @@ apps/api/data/
 *.db-*
 *.sqlite
 *.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
 
 # Arquivos gerados
 apps/web/dist/
@@ -26,3 +30,6 @@ coverage/
 .DS_Store
 Thumbs.db
 *.bak
+
+# Backups locais do banco
+backups-local/
