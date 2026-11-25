@@ -1,0 +1,37 @@
+{
+  "faq": {
+    "pedir": {
+      "pergunta": "Como faço um pedido?",
+      "resposta": "Escolha os itens, informe como deseja receber e pagar e revise o resumo. O pedido só é registrado depois que você confirma com o código apresentado."
+    },
+    "retirada": {
+      "pergunta": "Posso retirar meu pedido?",
+      "resposta": "Escolha retirada no atendimento. Para confirmar o endereço e o horário de retirada, solicite um atendente."
+    },
+    "entrega": {
+      "pergunta": "Como funciona a entrega?",
+      "resposta": "Informe o bairro para consultar a taxa cadastrada. Se escolher entrega, informe também o endereço. A taxa final aparece no resumo antes da confirmação."
+    },
+    "pagamento": {
+      "pergunta": "Receber a chave Pix confirma o pagamento?",
+      "resposta": "O envio da chave Pix não confirma o pagamento. Para tratar comprovantes ou conferir um pagamento, solicite um atendente."
+    },
+    "cancelamento": {
+      "pergunta": "Como cancelo?",
+      "resposta": "Para cancelar um carrinho ainda não confirmado, envie cancelar. Para alterar ou cancelar um pedido já registrado, solicite um atendente."
+    },
+    "horario": { "pergunta": "Qual é o horário de atendimento?", "resposta": null },
+    "endereco": { "pergunta": "Qual é o endereço para retirada?", "resposta": null },
+    "reembolso": { "pergunta": "Qual é a política de reembolso?", "resposta": null },
+    "alergenos": { "pergunta": "Quais são os ingredientes ou alergênicos?", "resposta": null },
+    "prazo": { "pergunta": "Qual é o prazo de entrega?", "resposta": null }
+  },
+  "regras": [
+    "Preço, disponibilidade, taxa, formas de pagamento e chave Pix vêm da API.",
+    "Alterações em um pedido confirmado e dúvidas sobre pagamento exigem atendimento humano.",
+    "Sem informação cadastrada, informe a pendência e ofereça atendimento humano."
+  ],
+  "aliases_regiao": [
+    { "alias": "Morro do Meio", "regiao": "Presidente Médici" }
+  ]
+}

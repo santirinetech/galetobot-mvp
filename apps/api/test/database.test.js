@@ -4,11 +4,75 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import bcrypt from 'bcryptjs';
 import Database from 'better-sqlite3';
-import { initializeDatabase, resolveDatabasePath } from '../src/database.js';
+import { initializeDatabase, resolveDatabasePath, selectRuntimeDatabase } from '../src/database.js';
 
 const admin = { email: 'teste@example.invalid', password: 'senha-ficticia-123' };
+
+test('separa caminhos de demonstração, operação e testes antes de abrir o SQLite', t => {
+    const root = temporaryProject(t);
+    const { projectRoot, legacy } = root;
+    const tempRoot = path.join(projectRoot, 'temporary');
+    fs.mkdirSync(tempRoot);
+    const settings = { projectRoot, tempRoot };
+    createEmptyDatabase(legacy);
+    const before = fs.readFileSync(legacy);
+    const demo = path.join(projectRoot, 'apps', 'api', 'data', 'demo');
+    const demoFile = path.join(demo, 'galeto-demo.db');
+    const backup = path.join(projectRoot, 'backups-local', 'backup.db');
+    createEmptyDatabase(backup);
+    const backupBefore = fs.readFileSync(backup);
+    assert.deepEqual(selectRuntimeDatabase('development', { DATABASE_PATH: legacy }, settings), {
+        databasePath: fs.realpathSync.native(projectRoot) + path.sep + path.relative(projectRoot, demoFile),
+        allowCreate: false
+    });
+    for (const target of [legacy, backup, path.relative(projectRoot, legacy)]) {
+        assert.throws(() => selectRuntimeDatabase('development', { DEMO_DATABASE_PATH: target }, settings), /Banco fora/);
+    }
+    fs.mkdirSync(demo, { recursive: true });
+    const hardLink = path.join(demo, 'alias.db');
+    fs.linkSync(legacy, hardLink);
+    assert.throws(() => selectRuntimeDatabase('development', { DEMO_DATABASE_PATH: hardLink }, settings), /links físicos/);
+    const junction = path.join(demo, 'alias');
+    fs.symlinkSync(path.dirname(legacy), junction, process.platform === 'win32' ? 'junction' : 'dir');
+    assert.throws(() => selectRuntimeDatabase('development', { DEMO_DATABASE_PATH: path.join(junction, path.basename(legacy)) }, settings), /Banco fora/);
+    assert.throws(() => selectRuntimeDatabase('operational', {}, settings), /exige DATABASE_PATH explícito/);
+    for (const target of [demoFile, backup, path.join(tempRoot, 'test.db')]) {
+        assert.throws(() => selectRuntimeDatabase('operational', { DATABASE_PATH: target }, settings), /fora dos diretórios/);
+    }
+    assert.deepEqual(selectRuntimeDatabase('operational', { DATABASE_PATH: legacy, DATABASE_ALLOW_CREATE: '1' }, settings), {
+        databasePath: fs.realpathSync.native(legacy), allowCreate: false
+    });
+    assert.throws(() => selectRuntimeDatabase('test', { DATABASE_PATH: legacy }, settings), /Banco fora/);
+    assert.equal(selectRuntimeDatabase('test', { DATABASE_PATH: path.join(tempRoot, 'test.db'), DATABASE_ALLOW_CREATE: '1' }, settings).allowCreate, true);
+    assert.deepEqual(fs.readFileSync(legacy), before);
+    assert.deepEqual(fs.readFileSync(backup), backupBefore);
+});
+
+test('modo de desenvolvimento da API recusa um banco existente fora da demonstração', t => {
+    const { projectRoot, legacy } = temporaryProject(t);
+    createEmptyDatabase(legacy);
+    const before = fs.readFileSync(legacy);
+    const entry = fileURLToPath(new URL('../src/index.js', import.meta.url));
+    const result = spawnSync(process.execPath, [entry, '--development'], {
+        cwd: projectRoot,
+        env: {
+            ...process.env,
+            HOST: '127.0.0.1', PORT: '0',
+            DATABASE_PATH: legacy, DEMO_DATABASE_PATH: legacy, DATABASE_ALLOW_CREATE: '1',
+            ADMIN_EMAIL: admin.email, ADMIN_PASSWORD: admin.password
+        },
+        encoding: 'utf8',
+        timeout: 5000
+    });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /Banco fora do diretório isolado/);
+    assert.deepEqual(fs.readFileSync(legacy), before);
+    assert.equal(fs.existsSync(`${legacy}-wal`), false);
+    assert.equal(fs.existsSync(`${legacy}-shm`), false);
+});
 
 function temporaryProject(t) {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'galetobot-'));
@@ -129,4 +193,33 @@ test('caminhos ausentes exigem opt-in e não criam arquivos ou diretórios', t =
     assert.throws(() => initializeDatabase({ projectRoot, databasePath, ...admin }), /Banco SQLite não encontrado/);
     assert.equal(fs.existsSync(path.dirname(standard)), false);
     assert.equal(fs.existsSync(path.dirname(databasePath)), false);
+});
+
+test('esquema expandido é opt-in e preserva o nome e preço registrados em pedidos anteriores', t => {
+    const { projectRoot } = temporaryProject(t);
+    const legacy = initializeDatabase({ projectRoot, allowCreate: true, ...admin });
+    try {
+        assert.equal(legacy.prepare("SELECT COUNT(*) FROM sqlite_master WHERE name='site_checkouts'").pluck().get(), 0);
+        legacy.exec(`
+            INSERT INTO orders (id,source,total_cents) VALUES (1,'counter',4500);
+            INSERT INTO order_items (order_id,product_id,quantity,unit_price_cents) VALUES (1,1,1,4500);
+        `);
+    } finally {
+        legacy.close();
+    }
+    const options = { projectRoot, enableStore: true, ...admin };
+    const updated = initializeDatabase(options);
+    try {
+        updated.prepare('UPDATE products SET name=?,price_cents=? WHERE id=1').run('Novo nome', 5100);
+    } finally {
+        updated.close();
+    }
+    const reopened = initializeDatabase(options);
+    try {
+        const line = reopened.prepare('SELECT product_name,unit_price_cents FROM order_items').get();
+        assert.deepEqual(line, { product_name: 'Galeto', unit_price_cents: 4500 });
+        assert.equal(reopened.prepare('SELECT total_cents FROM orders WHERE id=1').pluck().get(), 4500);
+    } finally {
+        reopened.close();
+    }
 });

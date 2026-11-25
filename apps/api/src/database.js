@@ -1,10 +1,67 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import bcrypt from 'bcryptjs';
+import { initializeStoreSchema } from './store-schema.js';
 
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
+
+function canonicalPath(filename) {
+    try {
+        fs.lstatSync(filename);
+    } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+        const parent = path.dirname(filename);
+        if (parent === filename) throw error;
+        return path.join(canonicalPath(parent), path.basename(filename));
+    }
+    return fs.realpathSync.native(filename);
+}
+
+function inside(directory, filename) {
+    const relative = path.relative(directory, filename);
+    return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+export function selectRuntimeDatabase(mode, env, { projectRoot = repositoryRoot, tempRoot = os.tmpdir() } = {}) {
+    const root = canonicalPath(projectRoot);
+    const demo = path.join(root, 'apps', 'api', 'data', 'demo');
+    const temp = canonicalPath(tempRoot);
+    const backup = path.join(root, 'backups-local');
+    const allowCreate = env.NODE_ENV !== 'production' && env.DATABASE_ALLOW_CREATE === '1';
+
+    if (mode === 'operational' || mode === 'hosted') {
+        if (!env.DATABASE_PATH?.trim()) throw new Error('O modo operacional exige DATABASE_PATH explícito');
+        const filename = resolveDatabasePath({ projectRoot: root, databasePath: env.DATABASE_PATH });
+        const target = canonicalPath(filename);
+        if ([demo, temp, backup].some(directory => inside(directory, filename) || inside(canonicalPath(directory), target))) {
+            throw new Error('O modo operacional exige um banco fora dos diretórios de demonstração, testes e backups');
+        }
+        return { databasePath: target, allowCreate: false };
+    }
+
+    if (mode !== 'development' && mode !== 'test') throw new Error('Modo de banco desconhecido');
+    if (mode === 'test' && !env.DATABASE_PATH?.trim()) throw new Error('O modo de teste exige DATABASE_PATH temporário');
+    const configuredPath = mode === 'test' ? env.DATABASE_PATH : (env.DEMO_DATABASE_PATH ?? path.join(demo, 'galeto-demo.db'));
+    const filename = resolveDatabasePath({ projectRoot: root, databasePath: configuredPath });
+    const target = canonicalPath(filename);
+    const scope = mode === 'test' ? temp : demo;
+    const protectedPaths = [
+        path.join(root, 'apps', 'api', 'data', 'galeto-dev.db'),
+        path.join(root, 'apps', 'api', 'apps', 'api', 'data', 'galeto-dev.db'),
+        backup
+    ];
+    if (!inside(scope, filename) || !inside(scope, target) ||
+        protectedPaths.some(protectedPath => inside(protectedPath, filename) || inside(canonicalPath(protectedPath), target))) {
+        throw new Error('Banco fora do diretório isolado ou reservado para operação/backup');
+    }
+    if (isDatabaseFile(target) && fs.statSync(target).nlink > 1) {
+        throw new Error('Banco isolado não pode ser um arquivo com links físicos');
+    }
+    return { databasePath: target, allowCreate };
+}
 
 function isDatabaseFile(filename) {
     try {
@@ -36,9 +93,9 @@ export function resolveDatabasePath({ databasePath, projectRoot = repositoryRoot
     return existing[0] ?? standard;
 }
 
-export function initializeDatabase({ databasePath, projectRoot, email, password, allowCreate = false }) {
+export function initializeDatabase({ databasePath, projectRoot, email, password, allowCreate = false, enableStore = false }) {
     if (!email || !password || password === 'ALTERE_PARA_UMA_SENHA_FORTE' || password.length < 12) {
-        throw new Error('Configure ADMIN_EMAIL e ADMIN_PASSWORD forte (mín. 12 caracteres) no .env');
+        throw new Error('Configure ADMIN_EMAIL e ADMIN_PASSWORD forte (mín. 12 caracteres) no ambiente da API. Desenvolvimento carrega .env.development e operação carrega .env.');
     }
 
     const filename = resolveDatabasePath({ databasePath, projectRoot });
@@ -64,6 +121,7 @@ export function initializeDatabase({ databasePath, projectRoot, email, password,
             CREATE TABLE IF NOT EXISTS order_items(id INTEGER PRIMARY KEY,order_id INTEGER NOT NULL,product_id INTEGER NOT NULL,quantity INTEGER NOT NULL,unit_price_cents INTEGER NOT NULL,FOREIGN KEY(order_id) REFERENCES orders(id),FOREIGN KEY(product_id) REFERENCES products(id));
             CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,action TEXT NOT NULL,detail TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
             `);
+            if (enableStore) initializeStoreSchema(db);
             const initialProducts = [
                 ['Galeto', 4500, 10],
                 ['Feijão tropeiro', 1200, 5],

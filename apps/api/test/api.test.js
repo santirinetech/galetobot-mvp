@@ -1,0 +1,407 @@
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import fs from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import { createInterface } from 'node:readline';
+import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import Database from 'better-sqlite3';
+
+test('API HTTP isolada cobre regressões, erros seguros e reenvio após perda da resposta', { timeout: 15000 }, async t => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'galetobot-http-'));
+    const origin = 'http://localhost:5173';
+    const token = 'token-ficticio-do-http';
+    const email = 'teste@example.invalid';
+    const password = 'senha-ficticia-123';
+    const entry = fileURLToPath(new URL('../src/index.js', import.meta.url));
+    const databasePath = path.join(directory, 'http.db');
+    const child = spawn(process.execPath, [entry, '--test'], {
+        cwd: directory,
+        env: {
+            ...process.env,
+            NODE_ENV: 'test',
+            HOST: '127.0.0.1',
+            PORT: '0',
+            DATABASE_PATH: databasePath,
+            DATABASE_ALLOW_CREATE: '1',
+            ADMIN_EMAIL: email,
+            ADMIN_PASSWORD: password,
+            APP_ORIGIN: origin,
+            WEBHOOK_TOKEN: token
+        },
+        stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const closed = once(child, 'close');
+    t.after(async () => {
+        child.kill();
+        try {
+            await closed;
+            assert.doesNotMatch(stderr, /Cliente Privado|11912345678|segredo-ficticio/);
+        } finally {
+            fs.rmSync(directory, { recursive: true, force: true });
+        }
+    });
+    let stderr = '';
+    child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+    let baseUrl;
+    for await (const line of createInterface({ input: child.stdout })) {
+        baseUrl = line.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];
+        if (baseUrl) break;
+    }
+    assert.ok(baseUrl, stderr);
+
+    const privatePayload = { mensagem: 'Cliente Privado 11912345678 segredo-ficticio' };
+    for (const [body, status, error] of [
+        [JSON.stringify(privatePayload).slice(0, -1), 400, 'JSON malformado'],
+        [JSON.stringify({ ...privatePayload, padding: 'z'.repeat(103000) }), 413, 'Payload acima do limite']
+    ]) {
+        const response = await fetch(`${baseUrl}/api/integrations/conversation`, {
+            method: 'POST', headers: { 'content-type': 'application/json', 'x-integration-token': token },
+            body, signal: AbortSignal.timeout(3000)
+        });
+        assert.equal(response.status, status);
+        assert.deepEqual(await response.json(), { error });
+    }
+
+    function post(endpoint, payload, headers = {}) {
+        return fetch(`${baseUrl}/api${endpoint}`, {
+            method: 'POST',
+            signal: AbortSignal.timeout(3000),
+            headers: { 'content-type': 'application/json', ...headers },
+            body: JSON.stringify(payload)
+        });
+    }
+    const rejected = await post('/login', { email, password }, { origin: 'http://example.invalid' });
+    assert.equal(rejected.status, 403);
+    const login = await post('/login', { email, password }, { origin });
+    assert.equal(login.status, 200);
+    const panelHeaders = { origin, cookie: login.headers.get('set-cookie').split(';')[0] };
+    const counter = await post('/orders', {
+        name: 'Cliente Teste', phone: '11900000000', source: 'counter',
+        items: [{ product_id: 1, quantity: 1 }]
+    }, panelHeaders);
+    assert.equal(counter.status, 201);
+    assert.deepEqual(await counter.json(), { id: 1, total_cents: 4500 });
+    const simulate = await post('/simulate', { phone: '11900000000', message: 'o de sempre' }, panelHeaders);
+    assert.equal(simulate.status, 200);
+    assert.deepEqual((await simulate.json()).suggested_items, [{ product_id: 1, quantity: 1 }]);
+
+    const auth = { 'x-integration-token': token };
+    const integrationOrder = await post('/integrations/order', {
+        name: 'Cliente Teste', phone: '11900000000', source: 'whatsapp-simulated',
+        items: [{ product_id: 3, quantity: 1 }]
+    }, auth);
+    assert.equal(integrationOrder.status, 201);
+    assert.deepEqual(await integrationOrder.json(), { id: 2, total_cents: 800 });
+    const products = await fetch(`${baseUrl}/api/integrations/products`, { headers: auth, signal: AbortSignal.timeout(3000) });
+    assert.equal(products.status, 200);
+    assert.equal((await products.json()).find(product => product.id === 1).stock, 9);
+
+    const session_id = 'teste@lid';
+    const unauthorized = await post('/integrations/conversation', { session_id, message_id: '1', mensagem: 'cardápio' });
+    assert.equal(unauthorized.status, 401);
+    const command = async (message_id, mensagem) => {
+        const reply = await post('/integrations/conversation', { session_id, message_id, mensagem }, auth);
+        assert.equal(reply.status, 200);
+        return (await reply.json()).resposta;
+    };
+    await command('1', 'adicionar 2 #1');
+    await command('2', 'nome Cliente Conversa');
+    await command('3', 'telefone 11900000001');
+    await command('fulfillment', 'retirada');
+    await command('payment', 'pagamento Pix');
+    const summary = await command('4', 'resumo');
+    const confirm = summary.match(/confirmar [0-9a-f-]{36}$/)?.[0];
+    assert.ok(confirm);
+
+    const db = new Database(databasePath, { fileMustExist: true });
+    try {
+        db.exec(`
+            CREATE TRIGGER fail_http_response BEFORE INSERT ON conversation_messages
+            WHEN NEW.message_id = 'retry' BEGIN
+                SELECT RAISE(ABORT, 'Cliente Privado 11912345678 segredo-ficticio');
+            END;
+        `);
+        const failed = await post('/integrations/conversation', { session_id, message_id: 'retry', mensagem: confirm }, auth);
+        assert.equal(failed.status, 500);
+        assert.deepEqual(await failed.json(), { error: 'Erro interno' });
+        assert.equal(db.prepare('SELECT COUNT(*) FROM orders').pluck().get(), 2);
+        db.exec('DROP TRIGGER fail_http_response');
+
+        const body = JSON.stringify({ session_id, message_id: '5', mensagem: confirm });
+        await new Promise((resolve, reject) => {
+            const request = http.request(`${baseUrl}/api/integrations/conversation`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), ...auth }
+            }, response => {
+                response.destroy();
+                if (response.statusCode === 200) resolve();
+                else reject(new Error(`Resposta inesperada: ${response.statusCode}`));
+            });
+            request.on('error', reject);
+            request.setTimeout(3000, () => request.destroy(new Error('Timeout no HTTP')));
+            request.end(body);
+        });
+        assert.equal(db.prepare('SELECT COUNT(*) FROM orders').pluck().get(), 3);
+        assert.match(await command('5', confirm), /Pedido #3 confirmado.*90,00/);
+        assert.equal(db.prepare('SELECT COUNT(*) FROM orders').pluck().get(), 3);
+        assert.equal(db.prepare('SELECT stock FROM products WHERE id=1').pluck().get(), 7);
+
+        async function storeRequest(endpoint, { method = 'GET', body, admin = false, status = 200 } = {}) {
+            const response = await fetch(`${baseUrl}/api${endpoint}`, {
+                method, signal: AbortSignal.timeout(3000),
+                headers: { 'content-type': 'application/json', origin, ...(admin ? panelHeaders : {}) },
+                body: body && JSON.stringify(body)
+            });
+            assert.equal(response.status, status, endpoint);
+            return response.json();
+        }
+        const settings = {
+            name: 'Loja de teste', hours: '18h às 22h', menu_note: '', menu_open: true,
+            regions: [{ name: 'Centro', shipping_cents: 600 }], payments: ['Pix']
+        };
+        await storeRequest('/settings', { method: 'PUT', body: settings, admin: true });
+        await storeRequest('/products/1', { method: 'PATCH', admin: true, body: { name: 'Galeto da casa', price_cents: 5100, category: 'Aves' } });
+        const menu = await storeRequest('/menu');
+        assert.equal(menu.products.find(product => product.id === 1).price_cents, 5100);
+        assert.equal(menu.products.find(product => product.id === 1).category, 'Aves');
+        const oldOrder = await storeRequest('/orders/1', { admin: true });
+        assert.equal(oldOrder.items[0].name, 'Galeto');
+        assert.equal(oldOrder.items[0].unit_price_cents, 4500);
+
+        const payload = {
+            name: 'Cliente Site', phone: '11900000002', fulfillment: 'delivery', payment: 'Pix',
+            region: 'Centro', address: 'Rua de Teste, 1', items: [{ product_id: 1, quantity: 2 }],
+            shipping_cents: 1, total_cents: 1
+        };
+        const quoteOptions = { method: 'POST', body: payload, status: 201 };
+        const stale = await storeRequest('/menu/quote', quoteOptions);
+        assert.equal(stale.total_cents, 10800);
+        settings.regions[0].shipping_cents = 800;
+        await storeRequest('/settings', { method: 'PUT', body: settings, admin: true });
+        await storeRequest('/menu/confirm', { method: 'POST', body: { token: stale.token }, status: 409 });
+        const reviewed = await storeRequest('/menu/quote', quoteOptions);
+        const confirmation = { method: 'POST', body: { token: reviewed.token } };
+        const [one, two] = await Promise.all([
+            storeRequest('/menu/confirm', confirmation), storeRequest('/menu/confirm', confirmation)
+        ]);
+        assert.deepEqual(one, { id: 4, status: 'pending', total_cents: 11000 });
+        assert.deepEqual(two, one);
+        const orders = await storeRequest('/orders', { admin: true });
+        assert.deepEqual(orders.map(row => row.source), ['site', 'whatsapp', 'whatsapp-simulated', 'counter']);
+        assert.equal(db.prepare('SELECT stock FROM products WHERE id=1').pluck().get(), 5);
+        assert.equal(db.prepare('SELECT COUNT(*) FROM stock_movements WHERE product_id=1 AND reason=?').pluck().get('Venda'), 3);
+        await storeRequest('/orders/4/status', { method: 'PATCH', admin: true, body: { status: 'confirmed' } });
+        const tracking = await storeRequest('/menu/status', confirmation);
+        assert.deepEqual(tracking, { ...one, status: 'confirmed' });
+        assert.equal((await storeRequest('/orders/4', { admin: true })).details.address, payload.address);
+        await storeRequest('/products/1/movements', { method: 'POST', admin: true, body: { delta: -6, reason: 'Contagem' }, status: 409 });
+        await storeRequest('/products/1/movements', { method: 'POST', admin: true, body: { delta: 2, reason: 'Reposição' }, status: 201 });
+        const movements = await storeRequest('/stock/movements', { admin: true });
+        assert.equal(movements[0].balance, 7);
+        assert.equal(movements[0].reason, 'Reposição');
+        await storeRequest('/products/1', { method: 'PATCH', admin: true, body: { active: false } });
+        assert.ok(!(await storeRequest('/menu')).products.some(product => product.id === 1));
+        assert.equal((await storeRequest('/dashboard', { admin: true })).today, 3);
+
+        // Run the sanitized workflow's Code node against Gemini-shaped fixtures.
+        const workflow = JSON.parse(fs.readFileSync(new URL('../../../docs/n8n/galetobot-kodie-gemini-ia.json', import.meta.url), 'utf8'));
+        assert.equal(workflow.active, false);
+        assert.equal(workflow.nodes.length, 9);
+        assert.ok(workflow.nodes.every(node => !node.credentials));
+        const codeNode = workflow.nodes.find(node => node.name === 'Code in JavaScript');
+        const normalizeNode = workflow.nodes.find(node => node.name === 'Preparar resposta HTTP');
+        const prompt = workflow.nodes.find(node => node.name === 'Message a model').parameters.messages.values[0].content;
+        const renderPrompt = new Function('$json', '$', `return (${prompt.slice(3, -2)});`);
+        assert.match(renderPrompt({ body: { use_model: true } },
+            () => ({ first: () => ({ json: { body: { mensagem: 'Entrega e Pix' } } }) })),
+        /delivery sem value[\s\S]*Entrega e Pix/);
+        const preparePayload = new Function('$', '$input', codeNode.parameters.jsCode);
+        const formatNode = new Function('$', '$input', normalizeNode.parameters.jsCode);
+        const formatResponse = (output, context) => formatNode(
+            () => ({ first: () => ({ json: context }) }),
+            { first: () => ({ json: output }) }
+        )[0].json;
+        const commercialSession = 'cliente-comercial@lid';
+        let messageId = 0;
+        async function conversation(text, actions, { id = String(++messageId), session = commercialSession, modelFailed = false } = {}) {
+            const body = { session_id: session, message_id: id, mensagem: text };
+            const prepared = await post('/integrations/conversation/context', body, auth);
+            assert.equal(prepared.status, 200);
+            const context = await prepared.json();
+            assert.equal(Object.hasOwn(context, 'pix_key'), false);
+            const model = modelFailed ? { error: 'Modelo indisponível' } : {
+                content: { parts: [{ thought: true, text: 'ignorar' }, { text: JSON.stringify({ actions }) }] }
+            };
+            const envelope = { statusCode: prepared.status, body: context };
+            const input = preparePayload(name => ({ first: () => ({ json: name === 'Webhook' ? { body } : envelope }) }), {
+                first: () => ({ json: model })
+            })[0].json;
+            let output = input;
+            if (!input.skip_api) {
+                const response = await post('/integrations/conversation', input, auth);
+                assert.equal(response.status, 200);
+                output = { statusCode: response.status, body: await response.json() };
+            }
+            const rendered = formatResponse(output, envelope);
+            assert.equal(rendered.statusCode, 200);
+            return { result: rendered.body, context };
+        }
+        const say = async (...args) => (await conversation(...args)).result.resposta;
+        await storeRequest('/products/1', { method: 'PATCH', admin: true, body: { active: true, name: 'Galeto' } });
+        settings.regions.push({ name: 'Presidente Médici', shipping_cents: 900 });
+        settings.pix_key = 'chave-demo@example.invalid';
+        await storeRequest('/settings', { method: 'PUT', body: settings, admin: true });
+        assert.equal(Object.hasOwn((await storeRequest('/menu')).settings, 'pix_key'), false);
+        assert.match(await say('Como faço um pedido?', [{ type: 'faq', value: 'pedir' }]), /código apresentado/);
+        assert.match(await say('Qual é o prazo?', [{ type: 'faq', value: 'prazo' }]), /pendente de configuração/);
+        assert.match(await say('Quanto custa o Galeto?', [{ type: 'price', value: 'Galeto' }]), /51,00/);
+        assert.match(await say('Tem Pizza?', [{ type: 'availability', value: 'Pizza' }]), /Não encontrei/);
+        assert.match(await say('frete Morro do Meio'), /Presidente Médici.*9,00/);
+        assert.match(await say('frete Bairro Desconhecido'), /atendente/);
+        settings.region_aliases = [{ alias: 'Morro do Meio', regiao: 'Centro' }];
+        await storeRequest('/settings', { method: 'PUT', body: settings, admin: true });
+        assert.match(await say('frete Morro do Meio'), /Qual região.*Centro.*Presidente Médici/);
+        settings.region_aliases = [];
+        await storeRequest('/settings', { method: 'PUT', body: settings, admin: true });
+        const add = [{ type: 'add', value: 'galetos', quantity: 2 }, { type: 'add', value: 'arroz', quantity: 1 }];
+        const built = await say('Quero dois galetos e um arroz.', add, { id: 'batch' });
+        assert.match(built, /2 × Galeto/);
+        assert.match(built, /1 × Arroz/);
+        assert.equal(await say('Quero dois galetos e um arroz.', add, { id: 'batch' }), built);
+        assert.equal((await conversation('qual meu carrinho?', [], { session: 'outro-cliente@lid' })).context.cart.items.length, 0);
+        assert.match(await say('Só um galeto', [{ type: 'change', value: 'galeto', quantity: 1 }]), /1 × Galeto/);
+        assert.match(await say('entrega Morro do Meio'), /9,00/);
+        await say('endereço Rua Exemplo, 12');
+        await say('nome Cliente Comercial');
+        await say('telefone 11900000003');
+        await say('pagamento Pix');
+        const pix = await say('Me passa a chave?', [{ type: 'pix' }], { id: 'pix-request' });
+        assert.match(pix, /chave-demo@example.invalid/);
+        assert.match(pix, /não confirma o pagamento/);
+        assert.ok(!db.prepare('SELECT response FROM conversation_messages').pluck().all().some(reply => reply.includes(settings.pix_key)));
+        settings.pix_key = 'nova-chave-demo@example.invalid';
+        await storeRequest('/settings', { method: 'PUT', body: settings, admin: true });
+        assert.match(await say('Me passa a chave?', [{ type: 'pix' }], { id: 'pix-request' }), /nova-chave-demo@example.invalid/);
+        const commercialQuote = await say('resumo');
+        assert.match(commercialQuote, /68,00/);
+        const commercialConfirm = commercialQuote.match(/confirmar [0-9a-f-]{36}$/)?.[0];
+        assert.ok(commercialConfirm);
+        assert.doesNotMatch(await say('Pode confirmar', [{ type: 'clarify' }]), /Pedido #/);
+        assert.equal(db.prepare('SELECT COUNT(*) FROM orders').pluck().get(), 4);
+        const invalid = await post('/integrations/conversation', {
+            session_id: commercialSession, message_id: 'fake-confirm', mensagem: 'olá',
+            interpretacao: { actions: [{ type: 'confirm', value: commercialConfirm }] }
+        }, auth);
+        assert.equal(invalid.status, 400);
+        assert.match(await say('frase incompreensível', [], { modelFailed: true }), /Não consegui interpretar/);
+        const validContext = { statusCode: 200, body: { use_model: false } };
+        assert.equal(formatResponse({ error: 'API desligada' }, validContext).statusCode, 502);
+        const rejectedContext = await post('/integrations/conversation/context', {
+            session_id: commercialSession, message_id: 'auth-check', mensagem: 'Como faço um pedido?'
+        }, { 'x-integration-token': 'token-incorreto' });
+        assert.equal(rejectedContext.status, 401);
+        const rejectedEnvelope = { statusCode: rejectedContext.status, body: await rejectedContext.json() };
+        assert.deepEqual(preparePayload(() => ({ first: () => ({ json: rejectedEnvelope }) }), {})[0].json, { skip_api: true });
+        const diagnosed = formatResponse({ skip_api: true }, rejectedEnvelope);
+        assert.equal(diagnosed.statusCode, 401);
+        assert.equal(diagnosed.body.etapa, 'contexto');
+        assert.match(diagnosed.body.error, /x-integration-token/);
+        assert.equal(formatResponse(rejectedEnvelope, validContext).body.etapa, 'conversa');
+        const transfer = await say('Quero falar com um atendente');
+        assert.match(transfer, /pausado/);
+        const silenced = await conversation(commercialConfirm, []);
+        assert.deepEqual(silenced.result, { resposta: '', suprimir_resposta: true });
+        assert.equal(silenced.context.use_model, false);
+        assert.deepEqual(formatResponse({ skip_api: true }, { statusCode: 200, body: silenced.context }).body,
+            { resposta: '', suprimir_resposta: true });
+        const activeHandoffs = await storeRequest('/conversation-handoffs', { admin: true });
+        assert.deepEqual(activeHandoffs.map(entry => entry.session_id), [commercialSession]);
+        await storeRequest('/conversation-handoffs/resume', { method: 'POST', body: { session_id: commercialSession }, status: 401 });
+        await storeRequest('/conversation-handoffs/resume', { method: 'POST', body: { session_id: commercialSession }, admin: true });
+        assert.deepEqual(await storeRequest('/conversation-handoffs', { admin: true }), []);
+        assert.match(await say(commercialConfirm), /Nenhum resumo vigente/);
+        const newConfirm = (await say('resumo')).match(/confirmar [0-9a-f-]{36}$/)?.[0];
+        assert.ok(newConfirm && newConfirm !== commercialConfirm);
+        assert.match(await say(newConfirm), /Pedido #5 confirmado.*68,00/);
+        assert.match(await say(newConfirm), /Pedido #5 confirmado/);
+        assert.equal(db.prepare('SELECT COUNT(*) FROM orders').pluck().get(), 5);
+        const commercialOrder = await storeRequest('/orders/5', { admin: true });
+        assert.equal(commercialOrder.details.region, 'Presidente Médici');
+        assert.equal(commercialOrder.details.shipping_cents, 900);
+        assert.equal(commercialOrder.source, 'whatsapp');
+        assert.equal((await storeRequest('/orders/3', { admin: true })).details.shipping_cents, 0);
+        assert.equal(db.prepare('SELECT COUNT(*) FROM stock_movements WHERE order_id=5').pluck().get(), 2);
+        assert.equal(db.prepare('SELECT stock FROM products WHERE id=1').pluck().get(), 6);
+        assert.equal(db.prepare('SELECT stock FROM products WHERE id=3').pluck().get(), 6);
+
+        // Reproduce the WhatsApp sequence through the existing workflow nodes and isolated API.
+        const session = 'regressao-entrega@lid';
+        const talk = (text, actions) => conversation(text, actions, { session });
+        await storeRequest('/products/1', { method: 'PATCH', admin: true, body: { price_cents: 4500 } });
+        await storeRequest('/products/3', { method: 'PATCH', admin: true, body: { price_cents: 800 } });
+        const farofa = await storeRequest('/products', { method: 'POST', admin: true, status: 201,
+            body: { name: 'Farofa', price_cents: 1000, stock: 8 } });
+        const hungry = await talk('To com fome', [{ type: 'menu' }]);
+        assert.equal(hungry.context.use_model, true);
+        assert.match(hungry.result.resposta, /Galeto.*45,00.*estoque/);
+        const items = [
+            { type: 'add', value: 'galeto', quantity: '1', price_cents: 1 },
+            { type: 'add', value: 'farofa', quantity: 1 },
+            { type: 'add', value: 'arroz', quantity: 1 }
+        ];
+        const basket = await talk('Quero um galeto com farofa e um arroz.', items);
+        assert.match(basket.result.resposta, /63,00.*[\s\S]*entrega ou retirada/);
+
+        const regions = settings.regions;
+        settings.regions = [];
+        await storeRequest('/settings', { method: 'PUT', body: settings, admin: true });
+        const unavailable = await talk('Quero entrega');
+        assert.equal(unavailable.context.use_model, false);
+        assert.match(unavailable.result.resposta, /entrega está indisponível/);
+        settings.regions = regions;
+        await storeRequest('/settings', { method: 'PUT', body: settings, admin: true });
+        const delivery = await talk('Quero entrega');
+        assert.match(delivery.result.resposta, /Qual é o seu bairro/);
+        const pixChoice = await talk('Quero pagar via Pix');
+        assert.match(pixChoice.result.resposta, /Pagamento: Pix.*bairro/);
+        assert.match((await talk('resumo')).result.resposta, /Entrega\nPagamento: Pix\nSubtotal sem frete:.*63,00/);
+
+        const batch = await talk('Entrega e vou pagar no Pix. Meu nome é Cliente Teste e meu telefone é (11) 90000-0042.', [
+            { type: 'delivery', value: null, quantity: null },
+            { type: 'name', value: 'Cliente Teste', quantity: null },
+            { type: 'phone', value: '(11) 90000-0042' },
+            { type: 'payment', value: 'Pix', quantity: null },
+            { type: 'confirm', value: 'inventado' }
+        ]);
+        assert.equal(batch.context.use_model, true);
+        assert.equal(batch.context.cart.needs_region, true);
+        assert.match(batch.result.resposta, /Pagamento: Pix[\s\S]*Qual é o seu bairro/);
+        assert.doesNotMatch(batch.result.resposta, /Qual é o seu (telefone|nome)|confirmar|inválida/);
+        const neighborhood = await talk('Morro do Meio', [{ type: 'delivery', value: 'Morro do Meio' }]);
+        assert.equal(neighborhood.context.cart.needs_name, false);
+        assert.equal(neighborhood.context.cart.needs_phone, false);
+        assert.match(neighborhood.result.resposta, /Presidente Médici:.*9,00[\s\S]*endereço/);
+        const complete = (await talk('Rua de Teste, 42', [{ type: 'address', value: 'Rua de Teste, 42' }])).result.resposta;
+        assert.match(complete, /Presidente Médici.*9,00[\s\S]*Rua de Teste, 42[\s\S]*Pagamento: Pix[\s\S]*63,00[\s\S]*72,00/);
+        const approve = complete.match(/confirmar [0-9a-f-]{36}$/)?.[0];
+        assert.ok(approve);
+        await talk('Pode confirmar');
+        assert.equal(db.prepare('SELECT COUNT(*) FROM orders').pluck().get(), 5);
+        assert.equal(db.prepare('SELECT stock FROM products WHERE id=?').pluck().get(farofa.id), 8);
+        assert.match((await talk(approve)).result.resposta, /Pedido #6 confirmado.*72,00/);
+        assert.match((await talk(approve)).result.resposta, /Pedido #6 confirmado/);
+        const delivered = await storeRequest('/orders/6', { admin: true });
+        assert.equal(delivered.details.region, 'Presidente Médici');
+        assert.equal(delivered.details.payment, 'Pix');
+        assert.equal(delivered.details.shipping_cents, 900);
+        assert.equal((await storeRequest('/orders', { admin: true }))[0].id, 6);
+        assert.equal(db.prepare('SELECT COUNT(*) FROM stock_movements WHERE order_id=6').pluck().get(), 3);
+        assert.equal(db.prepare('SELECT stock FROM products WHERE id=?').pluck().get(farofa.id), 7);
+    } finally {
+        db.close();
+    }
+});

@@ -5,7 +5,8 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "concurrently -n API,WEB \"npm run dev -w apps/api\" \"npm run dev -w apps/web\"",
+    "dev": "node scripts/dev.mjs",
+    "dev:local-env": "node --env-file=.env scripts/dev.mjs",
     "start": "npm run start -w apps/api",
     "build": "npm run build -w apps/web"
   },

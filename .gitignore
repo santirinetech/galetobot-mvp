@@ -5,6 +5,7 @@ node_modules/
 .env
 .env.*
 !.env.example
+!.env.production.example
 
 # Sessões WhatsApp e backups
 whatsapp-session*/
@@ -33,3 +34,13 @@ Thumbs.db
 
 # Backups locais do banco
 backups-local/
+private-local/
+runtime/
+creds.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.tar
+*.tar.gz
+*.zip

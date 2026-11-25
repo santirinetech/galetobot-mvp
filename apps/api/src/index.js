@@ -1,17 +1,39 @@
 import dotenv from 'dotenv';
-
-dotenv.config({
-    path: new URL('../../../.env', import.meta.url)
-});
+import { fileURLToPath } from 'node:url';
 
 import express from 'express';
 import bcrypt from 'bcryptjs';
-import { initializeDatabase } from './database.js';
+import { initializeDatabase, selectRuntimeDatabase } from './database.js';
+import { createOrderService, orderSchema, OrderUnavailableError } from './orders.js';
+import { createConversationService, CART_CLEANUP_INTERVAL_MS } from './conversations.js';
+import { integrationAuth, conversationHandler, contextHandler, resumeHandler } from './integrations.js';
+import { createStoreCheckout, createStoreRouter, productFields } from './store.js';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import crypto from 'node:crypto';
+
+const args = process.argv.slice(2);
+if (args.length !== 1 || !['--development', '--test', '--operational', '--hosted'].includes(args[0])) {
+    throw new Error('Use --development, --test, --operational ou --hosted como modo exclusivo da API');
+}
+const mode = args[0].slice(2);
+if (mode === 'hosted') {
+    const origin = URL.parse(process.env.APP_ORIGIN ?? '');
+    if (process.env.NODE_ENV !== 'production' || origin?.protocol !== 'https:' || origin.origin !== process.env.APP_ORIGIN) {
+        throw new Error('A hospedagem exige NODE_ENV=production e APP_ORIGIN com a origem HTTPS exata');
+    }
+    if (!process.env.WEBHOOK_TOKEN || /^ALTER(?:AR|E)_/i.test(process.env.WEBHOOK_TOKEN)) {
+        throw new Error('A hospedagem exige WEBHOOK_TOKEN configurado');
+    }
+    if (/^ALTER(?:AR|E)_/i.test(process.env.ADMIN_PASSWORD ?? '')) {
+        throw new Error('A hospedagem exige senha administrativa configurada');
+    }
+} else if (mode !== 'test') {
+    const envFile = mode === 'operational' ? '../../../.env' : '../../../.env.development';
+    dotenv.config({ path: fileURLToPath(new URL(envFile, import.meta.url)) });
+}
 
 const app = express();
 app.disable('x-powered-by');
@@ -19,12 +41,29 @@ app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: '100kb' }));
 app.use(cookieParser());
 const origin = process.env.APP_ORIGIN || 'http://localhost:5173';
+const enableStore = mode !== 'operational';
 const db = initializeDatabase({
-    databasePath: process.env.DATABASE_PATH,
-    allowCreate: process.env.NODE_ENV !== 'production' && process.env.DATABASE_ALLOW_CREATE === '1',
+    ...selectRuntimeDatabase(mode, process.env),
     email: process.env.ADMIN_EMAIL,
-    password: process.env.ADMIN_PASSWORD
+    password: process.env.ADMIN_PASSWORD,
+    enableStore
 });
+const orders = createOrderService(db, { enableStore });
+const { createOrder } = orders;
+const checkout = enableStore ? createStoreCheckout(db, orders) : null;
+const conversations = createConversationService(db, orders, { checkout });
+const store = checkout ? createStoreRouter(db, orders, checkout, auth, csrf) : null;
+conversations.cleanupExpiredCarts();
+store?.cleanup();
+const cleanupTimer = setInterval(() => {
+    try {
+        conversations.cleanupExpiredCarts();
+        store?.cleanup();
+    } catch {
+        console.error('Falha interna na limpeza dos carrinhos');
+    }
+}, CART_CLEANUP_INTERVAL_MS);
+cleanupTimer.unref();
 const hash = x => crypto.createHash('sha256').update(x).digest('hex');
 const token = () => crypto.randomBytes(32).toString('hex');
 const fail = (res, e) => res.status(400).json({ error: e });
@@ -36,52 +75,58 @@ app.post('/api/logout', csrf, (req, res) => { if (req.cookies.galeto_session) db
 app.get('/api/me', auth, (_req, res) => res.json({ ok: true }));
 app.get('/api/products', auth, (_req, res) => res.json(db.prepare('SELECT * FROM products ORDER BY id').all()));
 // Consulta de produtos para integrações externas, como o n8n.
-app.get('/api/integrations/products', (req, res) => {
-  const expected = process.env.WEBHOOK_TOKEN;
-
-  if (!expected || expected.startsWith('ALTERE_')) {
-    return res.status(503).json({
-      error: 'Integração não configurada'
-    });
-  }
-
-  const supplied = req.get('x-integration-token') || '';
-
-  const a = Buffer.from(supplied);
-  const b = Buffer.from(expected);
-
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-    return res.status(401).json({
-      error: 'Não autorizado'
-    });
-  }
-
-  const products = db.prepare(`
-    SELECT id, name, price_cents, stock
-    FROM products
-    WHERE active = 1
-    ORDER BY name
-  `).all();
-
-  return res.json(products);
+app.get('/api/integrations/products', integrationAuth, (_req, res) => {
+    const products = db.prepare(`
+        SELECT id, name, price_cents, stock
+        FROM products
+        WHERE active = 1
+        ORDER BY name
+    `).all();
+    res.json(products);
 });
 app.get('/api/orders', auth, (_req, res) => res.json(db.prepare(`SELECT o.*,c.name customer_name,c.phone FROM orders o LEFT JOIN customers c ON c.id=o.customer_id ORDER BY o.id DESC LIMIT 100`).all()));
-const productSchema = z.object({ name: z.string().trim().min(1).max(80), price_cents: z.number().int().min(0), stock: z.number().int().min(0) });
-app.post('/api/products', auth, csrf, (req, res) => { const parsed = productSchema.safeParse(req.body); if (!parsed.success) return fail(res, 'Produto inválido'); const p = parsed.data; const r = db.prepare('INSERT INTO products(name,price_cents,stock) VALUES(?,?,?)').run(p.name, p.price_cents, p.stock); res.status(201).json({ id: r.lastInsertRowid }); });
-app.patch('/api/products/:id/stock', auth, csrf, (req, res) => { const parsed = z.object({ stock: z.number().int().min(0) }).safeParse(req.body); if (!parsed.success) return fail(res, 'Estoque inválido'); const r = db.prepare('UPDATE products SET stock=? WHERE id=?').run(parsed.data.stock, req.params.id); if (!r.changes) return res.status(404).json({ error: 'Produto não encontrado' }); db.prepare('INSERT INTO audit(action,detail) VALUES(?,?)').run('stock_adjust', JSON.stringify({ id: req.params.id, stock: parsed.data.stock })); res.json({ ok: true }); });
-const orderSchema = z.object({ name: z.string().trim().min(1).max(100), phone: z.string().regex(/^\d{10,11}$/), source: z.enum(['counter', 'whatsapp-simulated']), items: z.array(z.object({ product_id: z.number().int().positive(), quantity: z.number().int().min(1).max(100) })).min(1).max(30), external_key: z.string().min(8).max(100).optional() });
-const createOrder = db.transaction((o) => {
-    if (o.external_key) { const old = db.prepare('SELECT id,total_cents FROM orders WHERE external_key=?').get(o.external_key); if (old) return { ...old, replayed: true }; }
-    const consolidated = new Map(); for (const item of o.items) consolidated.set(item.product_id, (consolidated.get(item.product_id) || 0) + item.quantity);
-    let total = 0; const lines = [];
-    for (const [id, qty] of consolidated) { const p = db.prepare('SELECT * FROM products WHERE id=?').get(id); if (!p || !p.active) throw new Error('Produto indisponível'); if (p.stock < qty) throw new Error(`${p.name}: somente ${p.stock} disponível(is)`); total += p.price_cents * qty; lines.push({ p, qty }); }
-    db.prepare('INSERT INTO customers(phone,name) VALUES(?,?) ON CONFLICT(phone) DO UPDATE SET name=excluded.name').run(o.phone, o.name);
-    const customer = db.prepare('SELECT id FROM customers WHERE phone=?').get(o.phone);
-    const result = db.prepare('INSERT INTO orders(customer_id,source,total_cents,external_key) VALUES(?,?,?,?)').run(customer.id, o.source, total, o.external_key || null);
-    for (const { p, qty } of lines) { const r = db.prepare('UPDATE products SET stock=stock-? WHERE id=? AND active=1 AND stock>=?').run(qty, p.id, qty); if (!r.changes) throw new Error(`${p.name}: estoque insuficiente`); db.prepare('INSERT INTO order_items(order_id,product_id,quantity,unit_price_cents) VALUES(?,?,?,?)').run(result.lastInsertRowid, p.id, qty, p.price_cents); }
-    db.prepare('INSERT INTO audit(action,detail) VALUES(?,?)').run('order_created', String(result.lastInsertRowid)); return { id: result.lastInsertRowid, total_cents: total };
+const productSchema = productFields.extend({ stock: z.number().int().min(0) }).partial({
+    description: true, category: true, image_url: true, active: true
 });
-function orderHandler(req, res) { const p = orderSchema.safeParse(req.body); if (!p.success) return fail(res, 'Dados do pedido inválidos: telefone com DDD, nome e itens são obrigatórios'); try { res.status(201).json(createOrder(p.data)); } catch (e) { res.status(409).json({ error: e.message }); } }
+const addProduct = db.transaction(p => {
+    if (!enableStore) return db.prepare('INSERT INTO products(name,price_cents,stock) VALUES(?,?,?)').run(p.name, p.price_cents, p.stock).lastInsertRowid;
+    const id = db.prepare('INSERT INTO products(name,price_cents,stock,description,category,image_url,active) VALUES(?,?,?,?,?,?,?)')
+        .run(p.name, p.price_cents, p.stock, p.description ?? '', p.category ?? '', p.image_url ?? '', Number(p.active ?? true)).lastInsertRowid;
+    if (p.stock) db.prepare('INSERT INTO stock_movements(product_id,delta,balance,reason) VALUES(?,?,?,?)').run(id, p.stock, p.stock, 'Saldo inicial');
+    return id;
+}).immediate;
+app.post('/api/products', auth, csrf, (req, res) => {
+    const parsed = productSchema.safeParse(req.body);
+    if (!parsed.success) return fail(res, 'Produto inválido');
+    return res.status(201).json({ id: addProduct(parsed.data) });
+});
+const setStock = db.transaction((id, stock) => {
+    const previous = db.prepare('SELECT stock FROM products WHERE id=?').get(id);
+    if (!previous) return false;
+    db.prepare('UPDATE products SET stock=? WHERE id=?').run(stock, id);
+    db.prepare('INSERT INTO audit(action,detail) VALUES(?,?)').run('stock_adjust', JSON.stringify({ id, stock }));
+    if (enableStore && stock !== previous.stock) {
+        db.prepare('INSERT INTO stock_movements(product_id,delta,balance,reason) VALUES(?,?,?,?)')
+            .run(id, stock - previous.stock, stock, 'Ajuste de saldo');
+    }
+    return true;
+}).immediate;
+app.patch('/api/products/:id/stock', auth, csrf, (req, res) => {
+    const parsed = z.object({ stock: z.number().int().min(0) }).safeParse(req.body);
+    if (!parsed.success) return fail(res, 'Estoque inválido');
+    if (!setStock(req.params.id, parsed.data.stock)) return res.status(404).json({ error: 'Produto não encontrado' });
+    return res.json({ ok: true });
+});
+function orderHandler(req, res, next) {
+    const p = orderSchema.safeParse(req.body);
+    if (!p.success) return fail(res, 'Dados do pedido inválidos: telefone com DDD, nome e itens são obrigatórios');
+    try {
+        return res.status(201).json(createOrder(p.data));
+    } catch (error) {
+        if (error instanceof OrderUnavailableError) return res.status(409).json({ error: error.message });
+        return next(error);
+    }
+}
 app.post('/api/orders', auth, csrf, orderHandler);
 // Simulador interno do canal WhatsApp, autenticado com a sessão do administrador.
 app.post('/api/simulate', auth, csrf, (req, res) => {
@@ -89,11 +134,32 @@ app.post('/api/simulate', auth, csrf, (req, res) => {
     res.json({ reply: 'Olá! Posso ajudar com seu pedido. Você pode consultar os produtos disponíveis ou pedir “o de sempre”.', suggested_items: [] });
 });
 // Endpoint de integração preparado; não habilita WhatsApp real. Requer segredo separado.
-app.post('/api/integrations/order', (req, res) => { const expected = process.env.WEBHOOK_TOKEN; if (!expected || expected.startsWith('ALTERE_')) return res.status(503).json({ error: 'Integração não configurada' }); const supplied = req.get('x-integration-token') || ''; const a = Buffer.from(supplied), b = Buffer.from(expected); if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(401).json({ error: 'Não autorizado' }); orderHandler(req, res); });
-app.use((err, req, res, next) => { console.error(err); res.status(500).json({ error: 'Erro interno' }); });
+app.post('/api/integrations/order', integrationAuth, orderHandler);
+app.post('/api/integrations/conversation', integrationAuth, conversationHandler(conversations));
+app.post('/api/integrations/conversation/context', integrationAuth, contextHandler(conversations));
+if (mode === 'hosted') {
+    const ready = db.prepare('SELECT 1 FROM sqlite_schema LIMIT 1');
+    app.get('/healthz', (_req, res) => {
+        ready.get();
+        res.sendStatus(204);
+    });
+}
+if (enableStore) {
+    app.get('/api/conversation-handoffs', auth, (_req, res) => res.json(conversations.listHandoffs()));
+    app.post('/api/conversation-handoffs/resume', auth, csrf, resumeHandler(conversations));
+}
+if (store) app.use('/api', store.router);
+app.use('/api', (_req, res) => res.status(404).json({ error: 'Rota indisponível nesta instância da API.' }));
+app.use((err, req, res, _next) => {
+    if (res.headersSent) return req.socket.destroy();
+    if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'JSON malformado' });
+    if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Payload acima do limite' });
+    console.error('Falha interna na API');
+    return res.status(500).json({ error: 'Erro interno' });
+});
 const port = Number(process.env.PORT || 3000);
-const host = process.env.HOST || '0.0.0.0';
+const host = process.env.HOST || (['operational', 'hosted'].includes(mode) ? '0.0.0.0' : '127.0.0.1');
 
-app.listen(port, host, () => {
-  console.log(`🍗 GaletoBot MVP API rodando em http://${host}:${port}`);
+const server = app.listen(port, host, () => {
+  console.log(`🍗 GaletoBot MVP API rodando em http://${host}:${server.address().port}`);
 });

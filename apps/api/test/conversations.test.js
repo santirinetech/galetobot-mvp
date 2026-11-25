@@ -1,0 +1,347 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { test } from 'node:test';
+import { once } from 'node:events';
+import { Worker } from 'node:worker_threads';
+import { initializeDatabase } from '../src/database.js';
+import { CART_TTL_MS, createConversationService } from '../src/conversations.js';
+import { conversationHandler, integrationAuth } from '../src/integrations.js';
+import { createOrderService, orderSchema } from '../src/orders.js';
+
+const session = '123456789012@lid';
+const phone = '11900000000';
+
+function fixture(t) {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'galetobot-conversations-'));
+    const options = {
+        projectRoot,
+        email: 'teste@example.invalid',
+        password: 'senha-ficticia-123'
+    };
+    let timestamp = 1000;
+    let nextId = 0;
+    let db = initializeDatabase({ ...options, allowCreate: true });
+    let service = createConversationService(db, createOrderService(db), { now: () => timestamp });
+    t.after(() => {
+        if (db.open) db.close();
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+    });
+    return {
+        options,
+        get db() { return db; },
+        get service() { return service; },
+        advance(ms) { timestamp += ms; },
+        restart() {
+            db.close();
+            db = initializeDatabase(options);
+            service = createConversationService(db, createOrderService(db), { now: () => timestamp });
+        },
+        send(mensagem, message_id = String(++nextId), session_id = session) {
+            return service.processMessage({ mensagem, message_id, session_id }).resposta;
+        }
+    };
+}
+
+function confirmation(response) {
+    const command = response.match(/confirmar [0-9a-f-]{36}$/)?.[0];
+    assert.ok(command, response);
+    return command;
+}
+
+function offer(f, items = 'adicionar 2 Galeto') {
+    f.send(items);
+    f.send('nome Cliente Teste');
+    f.send(`telefone ${phone}`);
+    return confirmation(f.send('resumo'));
+}
+
+function orderCount(db) {
+    return db.prepare('SELECT COUNT(*) AS count FROM orders').get().count;
+}
+
+test('carrinho edita itens e confirma com preço de catálogo, telefone informado e baixa atômica', t => {
+    const f = fixture(t);
+    assert.match(f.send('cardápio'), /#1 Galeto.*45,00.*10 em estoque/);
+    f.send('adicionar 2 Galeto');
+    f.send('adicionar 1 galeto');
+    f.send('alterar 2 #1');
+    f.send('adicionar 1 Salpicao');
+    f.send('remover Salpicão');
+    f.send('adicionar 1 feijao tropeiro');
+    const noDetails = f.send('resumo');
+    assert.match(noDetails, /102,00/);
+    assert.doesNotMatch(noDetails, /confirmar [0-9a-f]/);
+    assert.match(f.send('telefone 123456789012'), /10 ou 11 dígitos/);
+    f.send('nome Cliente Teste');
+    f.send(`telefone ${phone}`);
+    const summary = f.send('resumo');
+    assert.match(summary, /2 × Galeto.*45,00/);
+    assert.match(summary, /1 × Feijão tropeiro.*12,00/);
+    assert.equal(orderCount(f.db), 0);
+
+    const result = f.send(confirmation(summary));
+    assert.match(result, /Pedido #1 confirmado.*102,00/);
+    assert.deepEqual(f.db.prepare('SELECT source,total_cents FROM orders').get(), { source: 'whatsapp', total_cents: 10200 });
+    assert.deepEqual(f.db.prepare('SELECT name,phone FROM customers').get(), { name: 'Cliente Teste', phone });
+    assert.deepEqual(f.db.prepare('SELECT product_id,quantity,unit_price_cents FROM order_items ORDER BY product_id').raw().all(),
+        [[1, 2, 4500], [2, 1, 1200]]);
+    assert.deepEqual(f.db.prepare('SELECT stock FROM products ORDER BY id').pluck().all(), [8, 4, 8, 2]);
+});
+
+test('produto inexistente, ambíguo, esgotado e estoque insuficiente não entram no carrinho', t => {
+    const f = fixture(t);
+    assert.match(f.send('adicionar 1 Pizza'), /inexistente/);
+    assert.match(f.send('adicionar 3 Salpicão'), /somente 2/);
+    f.db.prepare('UPDATE products SET stock=0 WHERE id=1').run();
+    assert.match(f.send('adicionar 1 Galeto'), /somente 0/);
+    f.db.prepare("INSERT INTO products(name,price_cents,stock) VALUES('Arroz', 1000, 10)").run();
+    assert.match(f.send('adicionar 1 Arroz'), /mais de um/);
+    assert.equal(f.send('resumo'), 'O carrinho está vazio.');
+    assert.match(f.send('adicionar 1 #3'), /atualizado/);
+    assert.match(f.send('resumo'), /8,00/);
+    assert.equal(orderCount(f.db), 0);
+});
+
+test('estoque alterado no balcão antes da confirmação bloqueia o pedido inteiro', t => {
+    const f = fixture(t);
+    const confirm = offer(f);
+    createOrderService(f.db).createOrder({
+        name: 'Cliente Balcão', phone: '11900000001', source: 'counter',
+        items: [{ product_id: 1, quantity: 9 }]
+    });
+    assert.match(f.send(confirm), /somente 1/);
+    assert.equal(orderCount(f.db), 1);
+    assert.equal(f.db.prepare('SELECT stock FROM products WHERE id=1').pluck().get(), 1);
+    assert.equal(f.db.prepare('SELECT COUNT(*) FROM customers WHERE phone=?').pluck().get(phone), 0);
+    assert.match(f.send(confirm), /Nenhum resumo vigente/);
+    assert.match(f.send('alterar 1 Galeto'), /atualizado/);
+    assert.match(f.send(confirmation(f.send('resumo'))), /Pedido #2 confirmado/);
+});
+
+test('mudanças de preço com mesmo total exigem novo código e usam valores atuais', t => {
+    const f = fixture(t);
+    offer(f, 'adicionar 1 Galeto');
+    f.send('adicionar 1 Arroz');
+    const before = confirmation(f.send('resumo'));
+    f.db.exec('UPDATE products SET price_cents=4600 WHERE id=1; UPDATE products SET price_cents=700 WHERE id=3');
+    const updated = f.send(before);
+    assert.match(updated, /resumo mudou/);
+    assert.match(updated, /53,00/);
+    const after = confirmation(updated);
+    assert.notEqual(before, after);
+    assert.match(f.send(before), /Nenhum resumo vigente/);
+    assert.equal(orderCount(f.db), 0);
+    assert.match(f.send(after), /Pedido #1 confirmado/);
+    assert.deepEqual(f.db.prepare('SELECT unit_price_cents FROM order_items ORDER BY product_id').pluck().all(), [4600, 700]);
+});
+
+test('confirmação sem carrinho, ambígua, de outra sessão ou de resumo antigo não registra pedido', t => {
+    const f = fixture(t);
+    assert.match(f.send('confirmar 00000000-0000-0000-0000-000000000000'), /Nenhum resumo vigente/);
+    const before = offer(f);
+    for (const text of ['sim', 'confirmar', `não ${before}`, `${before}?`, `${before}\ncancelar`]) {
+        assert.doesNotMatch(f.send(text), /Pedido #\d+ confirmado/);
+    }
+    assert.match(f.send(before, 'outside', 'outra@lid'), /Nenhum resumo vigente/);
+    f.send('alterar 1 Galeto');
+    const after = confirmation(f.send('resumo'));
+    assert.notEqual(before, after);
+    assert.match(f.send(before), /Nenhum resumo vigente/);
+    assert.equal(orderCount(f.db), 0);
+});
+
+test('reenvio e confirmação duplicada persistem entre reinicializações e novos carrinhos', t => {
+    const f = fixture(t);
+    const added = f.send('adicionar 1 Galeto', 'add');
+    f.restart();
+    assert.equal(f.send('adicionar 1 Galeto', 'add'), added);
+    f.send('nome Cliente Teste');
+    f.send(`telefone ${phone}`);
+    const summary = f.send('resumo', 'summary');
+    const confirm = confirmation(summary);
+    assert.match(summary, /1 × Galeto/);
+    f.restart();
+    assert.equal(f.send('resumo', 'summary'), summary);
+    const receipt = f.send(confirm, 'confirm');
+    f.restart();
+    assert.equal(f.send(confirm, 'confirm'), receipt);
+    f.send('adicionar 1 Arroz');
+    assert.equal(f.send(confirm, 'confirmation-again'), receipt);
+    assert.equal(orderCount(f.db), 1);
+    assert.equal(f.db.prepare('SELECT stock FROM products WHERE id=1').pluck().get(), 9);
+    assert.match(f.send('resumo'), /1 × Arroz/);
+});
+
+test('cancelamento e expiração invalidam confirmação e limpam os dados da sessão', t => {
+    const f = fixture(t);
+    const cancelled = offer(f);
+    assert.equal(f.send('cancelar'), 'Carrinho cancelado.');
+    assert.match(f.send(cancelled), /Nenhum resumo vigente/);
+    const expired = offer(f);
+    f.advance(CART_TTL_MS);
+    assert.match(f.send(expired), /expirou/);
+    assert.match(f.send('resumo'), /vazio/);
+    assert.equal(orderCount(f.db), 0);
+    const cart = JSON.parse(f.db.prepare('SELECT cart_json FROM conversation_carts WHERE session_id=?').pluck().get(session));
+    assert.equal(cart.phone, '');
+    assert.equal(cart.name, '');
+    const confirm = offer(f);
+    f.send(confirm);
+    assert.match(f.send('cancelar'), /já foi registrado/);
+    assert.equal(orderCount(f.db), 1);
+});
+
+test('falha temporária ao persistir a resposta desfaz pedido, cliente e baixa e permite reenvio', t => {
+    const f = fixture(t);
+    const confirm = offer(f);
+    f.db.exec(`
+        CREATE TRIGGER temporary_message_failure BEFORE INSERT ON conversation_messages
+        WHEN NEW.message_id = 'retry'
+        BEGIN SELECT RAISE(ABORT, 'falha simulada'); END;
+    `);
+    assert.throws(() => f.send(confirm, 'retry'), /falha simulada/);
+    assert.equal(orderCount(f.db), 0);
+    assert.equal(f.db.prepare('SELECT COUNT(*) FROM customers').pluck().get(), 0);
+    assert.equal(f.db.prepare('SELECT stock FROM products WHERE id=1').pluck().get(), 10);
+    assert.equal(f.db.prepare('SELECT COUNT(*) FROM conversation_confirmations').pluck().get(), 0);
+    f.db.exec('DROP TRIGGER temporary_message_failure');
+    assert.match(f.send(confirm, 'retry'), /Pedido #1 confirmado/);
+    assert.equal(orderCount(f.db), 1);
+});
+
+test('serviço compartilhado mantém retorno e replay de balcão e simulador', t => {
+    const f = fixture(t);
+    const { createOrder } = createOrderService(f.db);
+    for (const [i, source] of ['counter', 'whatsapp-simulated'].entries()) {
+        const input = orderSchema.parse({
+            source, name: 'Cliente Teste', phone, external_key: `teste-key-${i}`,
+            items: [{ product_id: 1, quantity: 1 }, { product_id: 1, quantity: 2 }]
+        });
+        assert.deepEqual(createOrder(input), { id: i + 1, total_cents: 13500 });
+        assert.deepEqual(createOrder(input), { id: i + 1, total_cents: 13500, replayed: true });
+    }
+    assert.equal(f.db.prepare('SELECT stock FROM products WHERE id=1').pluck().get(), 4);
+});
+
+test('entrada de integração exige token, identificadores e retorna resposta sem usar preço enviado', t => {
+    const f = fixture(t);
+    const oldToken = process.env.WEBHOOK_TOKEN;
+    t.after(() => {
+        if (oldToken === undefined) delete process.env.WEBHOOK_TOKEN;
+        else process.env.WEBHOOK_TOKEN = oldToken;
+    });
+    process.env.WEBHOOK_TOKEN = 'token-ficticio-do-teste';
+    const handler = conversationHandler(f.service);
+    function request(body, token) {
+        const req = { body, get: () => token };
+        const result = { statusCode: 200 };
+        const res = {
+            status(code) { result.statusCode = code; return this; },
+            json(data) { result.body = data; }
+        };
+        integrationAuth(req, res, () => handler(req, res));
+        return result;
+    }
+    const body = { session_id: session, message_id: 'http-id', mensagem: 'cardápio', price_cents: 1 };
+    assert.equal(request(body, '').statusCode, 401);
+    assert.equal(request({ ...body, message_id: '' }, process.env.WEBHOOK_TOKEN).statusCode, 400);
+    const success = request(body, process.env.WEBHOOK_TOKEN);
+    assert.equal(success.statusCode, 200);
+    assert.match(success.body.resposta, /45,00/);
+    assert.equal(f.db.prepare('SELECT COUNT(*) FROM conversation_messages').pluck().get(), 1);
+});
+
+test('telefone informado no WhatsApp preserva o cadastro existente e o balcão ainda pode atualizá-lo', t => {
+    const f = fixture(t);
+    const orders = createOrderService(f.db);
+    const input = { name: 'Nome Original', phone, items: [{ product_id: 1, quantity: 1 }], source: 'counter' };
+    orders.createOrder(input);
+    f.send(offer(f));
+    assert.deepEqual(f.db.prepare('SELECT id,name FROM customers').get(), { id: 1, name: 'Nome Original' });
+    assert.deepEqual(f.db.prepare('SELECT customer_id FROM orders ORDER BY id').pluck().all(), [1, 1]);
+    orders.createOrder({ ...input, name: 'Nome Atualizado', source: 'whatsapp-simulated' });
+    assert.equal(f.db.prepare('SELECT name FROM customers').pluck().get(), 'Nome Atualizado');
+});
+
+test('renomear produto sem alterar preço invalida o resumo antigo', t => {
+    const f = fixture(t);
+    const before = offer(f);
+    f.db.prepare('UPDATE products SET name=? WHERE id=1').run('Galeto Assado');
+    const revised = f.send(before);
+    assert.match(revised, /resumo mudou/);
+    assert.match(revised, /2 × Galeto Assado/);
+    const after = confirmation(revised);
+    assert.notEqual(before, after);
+    assert.match(f.send(before), /Nenhum resumo vigente/);
+    assert.equal(orderCount(f.db), 0);
+    assert.match(f.send(after), /Pedido #1 confirmado/);
+});
+
+test('limpeza remove carrinho abandonado sem retorno e preserva pedidos e deduplicação', t => {
+    const f = fixture(t);
+    const confirm = offer(f);
+    const receipt = f.send(confirm, 'receipt');
+    f.send('adicionar 1 Galeto', 'add-other', 'abandonado@lid');
+    f.send('nome Cliente Abandonado', 'name-other', 'abandonado@lid');
+    f.send(`telefone ${phone}`, 'phone-other', 'abandonado@lid');
+    f.advance(CART_TTL_MS - 1);
+    assert.equal(f.service.cleanupExpiredCarts(), 0);
+    f.advance(1);
+    assert.equal(f.service.cleanupExpiredCarts(), 2);
+    assert.equal(f.db.prepare('SELECT COUNT(*) FROM conversation_carts').pluck().get(), 0);
+    assert.equal(orderCount(f.db), 1);
+    assert.equal(f.send(confirm, 'receipt'), receipt);
+    assert.equal(f.send(confirm), receipt);
+    assert.match(f.send('adicionar 1 Galeto', 'add-other', 'abandonado@lid'), /Carrinho atualizado/);
+    assert.equal(f.send('resumo', 'summary-after', 'abandonado@lid'), 'O carrinho está vazio.');
+    assert.equal(orderCount(f.db), 1);
+});
+
+test('quatro conexões SQLite simultâneas gravam um único pedido, recibo e baixa', { timeout: 15000 }, async t => {
+    const f = fixture(t);
+    const mensagem = offer(f);
+    const gate = new Int32Array(new SharedArrayBuffer(4));
+    const modules = ['database', 'orders', 'conversations'].map(name => new URL(`../src/${name}.js`, import.meta.url).href);
+    const script = `
+        import { parentPort, workerData } from 'node:worker_threads';
+        const { initializeDatabase } = await import(workerData.modules[0]);
+        const { createOrderService } = await import(workerData.modules[1]);
+        const { createConversationService } = await import(workerData.modules[2]);
+        const db = initializeDatabase(workerData.options);
+        try {
+            const service = createConversationService(db, createOrderService(db), { now: () => 1000 });
+            parentPort.postMessage('ready');
+            const gate = new Int32Array(workerData.gate);
+            if (Atomics.wait(gate, 0, 0, 10000) === 'timed-out') throw new Error('Timeout no início simultâneo');
+            parentPort.postMessage(service.processMessage(workerData.body));
+        } finally { db.close(); }
+    `;
+    const workers = [];
+    const exits = [];
+    try {
+        await Promise.all(['same', 'same', 'other', 'another'].map(message_id => {
+            const worker = new Worker(new URL('data:text/javascript,' + encodeURIComponent(script)), {
+                execArgv: [],
+                workerData: { modules, options: f.options, gate: gate.buffer, body: { session_id: session, message_id, mensagem } }
+            });
+            workers.push(worker);
+            exits.push(once(worker, 'exit'));
+            return once(worker, 'message').then(([message]) => assert.equal(message, 'ready'));
+        }));
+        const replies = workers.map(worker => once(worker, 'message'));
+        Atomics.store(gate, 0, 1);
+        Atomics.notify(gate, 0);
+        const results = (await Promise.all(replies)).flat();
+        assert.equal(new Set(results.map(result => result.resposta)).size, 1);
+        assert.match(results[0].resposta, /Pedido #1 confirmado/);
+        for (const [code] of await Promise.all(exits)) assert.equal(code, 0);
+        assert.equal(orderCount(f.db), 1);
+        assert.equal(f.db.prepare('SELECT COUNT(*) FROM order_items').pluck().get(), 1);
+        assert.equal(f.db.prepare('SELECT COUNT(*) FROM conversation_confirmations').pluck().get(), 1);
+        assert.equal(f.db.prepare('SELECT stock FROM products WHERE id=1').pluck().get(), 8);
+    } finally {
+        await Promise.all(workers.map(worker => worker.terminate()));
+    }
+});

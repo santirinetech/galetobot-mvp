@@ -1,25 +1,264 @@
-import React, { useEffect, useState } from 'react'; import { createRoot } from 'react-dom/client'; import './style.css';
-const money = n => (n / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-async function api(path, opts = {}) { const r = await fetch('/api' + path, { credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, ...opts, body: opts.body ? JSON.stringify(opts.body) : undefined }); const d = await r.json(); if (!r.ok) throw Error(d.error || 'Erro na requisição'); return d; }
+﻿import React, { useEffect, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { ArrowUpRight, Boxes, ClipboardList, FlaskConical, LayoutDashboard, LogOut, Menu, Package, Plus, Settings as SettingsIcon, ShoppingBag, Users } from 'lucide-react';
+import { api, money } from './client.js';
+import { Customers, Dashboard, Orders, Products, Settings, Stock } from './admin-sections.jsx';
+import { PublicMenu } from './public-menu.jsx';
+import { Brand, Dialog, Loading, Notice, ProductPhoto } from './ui.jsx';
+import './style.css';
+
+const tabs = [
+    ['dashboard', 'Visão geral', LayoutDashboard], ['pedidos', 'Pedidos', ClipboardList], ['novo', 'Balcão', ShoppingBag],
+    ['produtos', 'Produtos', Package], ['estoque', 'Estoque', Boxes], ['clientes', 'Clientes', Users],
+    ['settings', 'Configurações', SettingsIcon], ['ia', 'Ferramentas', FlaskConical]
+];
+const quickTabs = ['pedidos', 'novo', 'produtos', 'estoque'];
+
 function App() {
-    const [logged, setLogged] = useState(null), [email, setEmail] = useState('admin@local.test'), [password, setPassword] = useState(''), [tab, setTab] = useState('novo'), [products, setProducts] = useState([]), [orders, setOrders] = useState([]), [cart, setCart] = useState({}), [name, setName] = useState(''), [phone, setPhone] = useState(''), [msg, setMsg] = useState(''), [chat, setChat] = useState(''), [suggested, setSuggested] = useState([]), [error, setError] = useState(''), [busy, setBusy] = useState(false), [newProduct, setNewProduct] = useState({ name: '', price: '', stock: '0' });
-    async function refresh() { const [p, o] = await Promise.all([api('/products'), api('/orders')]); setProducts(p); setOrders(o) }
-    useEffect(() => { api('/me').then(() => { setLogged(true); refresh() }).catch(() => setLogged(false)) }, []);
-    async function action(fn) { setError(''); setBusy(true); try { await fn() } catch (e) { setError(e.message) } finally { setBusy(false) } }
-    async function login(e) { e.preventDefault(); await action(async () => { await api('/login', { method: 'POST', body: { email, password } }); setLogged(true); await refresh() }) }
-    function add(p) { setCart(c => ({ ...c, [p.id]: Math.min(p.stock, (c[p.id] || 0) + 1) })) }
-    async function order(source = 'counter', items = null) { await action(async () => { const selected = items || Object.entries(cart).filter(([, q]) => q > 0).map(([id, quantity]) => ({ product_id: Number(id), quantity })); if (!selected.length) throw Error('Selecione produtos'); await api('/orders', { method: 'POST', body: { name, phone: phone.replace(/\D/g, ''), source, items: selected, external_key: crypto.randomUUID() } }); setCart({}); setSuggested([]); setChat('Pedido registrado com sucesso!'); await refresh(); setTab('pedidos') }) }
-    async function simulate() { await action(async () => { const data = await api('/simulate', { method: 'POST', body: { phone: phone.replace(/\D/g, ''), message: msg } }); setChat(data.reply); setSuggested(data.suggested_items || []) }) }
-    if (logged === null) return <main className="container">Carregando...</main>;
-    if (!logged) return <main className="login"><form onSubmit={login} className="panel"><h1>🍗 GaletoBot</h1><p>Operação do restaurante</p><label>E-mail<input value={email} onChange={e => setEmail(e.target.value)} type="email" required /></label><label>Senha<input type="password" value={password} onChange={e => setPassword(e.target.value)} required /></label><button disabled={busy}>Entrar</button>{error && <p className="error">{error}</p>}</form></main>;
-    return <><header><strong>🍗 GaletoBot</strong><span>MVP • Mobile First</span><button className="small secondary" onClick={() => action(async () => { await api('/logout', { method: 'POST' }); setLogged(false) })}>Sair</button></header><main className="container"><div className="top"><h1>{({ novo: 'Novo pedido', pedidos: 'Pedidos', estoque: 'Estoque', ia: 'Atendimento IA' })[tab]}</h1><span className="pill">Demonstração local</span></div>{error && <div className="error panel">{error}</div>}
-        {tab === 'novo' && <><section className="panel"><h2>Cliente</h2><label>Nome<input placeholder="Nome do cliente" value={name} onChange={e => setName(e.target.value)} /></label><label>Telefone com DDD<input inputMode="tel" placeholder="27999999999" value={phone} onChange={e => setPhone(e.target.value)} /></label></section><section className="panel"><h2>Cardápio</h2>{products.map(p => <div className="product" key={p.id}><div><strong>{p.name}</strong><small>{money(p.price_cents)} • {p.stock ? p.stock + ' disponíveis' : 'Esgotado'}</small></div><div className="qty"><button className="secondary" onClick={() => setCart(c => ({ ...c, [p.id]: Math.max(0, (c[p.id] || 0) - 1) }))}>−</button><b>{cart[p.id] || 0}</b><button disabled={!p.stock || (cart[p.id] || 0) >= p.stock} onClick={() => add(p)}>+</button></div></div>)}</section><section className="panel"><div className="total"><strong>Total</strong><strong>{money(products.reduce((s, p) => s + p.price_cents * (cart[p.id] || 0), 0))}</strong></div><button disabled={busy} onClick={() => order()}>Confirmar pedido presencial</button></section></>}
-        {tab === 'pedidos' && <section className="panel"><button className="secondary" onClick={() => action(refresh)}>Atualizar</button>{orders.length === 0 ? <p>Nenhum pedido ainda.</p> : orders.map(o => <div className="product" key={o.id}><div><strong>#{o.id} • {o.customer_name}</strong><small>{o.source === 'counter' ? 'Balcão' : 'WhatsApp simulado'} • {o.created_at}</small></div><strong>{money(o.total_cents)}</strong></div>)}</section>}
-        {tab === 'estoque' && <section className="panel"><h2>Estoque atual</h2>{products.map(p => <div className="product" key={p.id}><div><strong>{p.name}</strong><small>{p.stock === 0 ? '🔴 Esgotado' : p.stock <= 2 ? '🟠 Estoque baixo' : '🟢 Disponível'} • {money(p.price_cents)}</small></div><div className="qty"><button className="secondary" onClick={() => action(async () => { await api(`/products/${p.id}/stock`, { method: 'PATCH', body: { stock: Math.max(0, p.stock - 1) } }); await refresh() })}>−</button><b>{p.stock}</b><button onClick={() => action(async () => { await api(`/products/${p.id}/stock`, { method: 'PATCH', body: { stock: p.stock + 1 } }); await refresh() })}>+</button></div></div>)}<h2>Novo produto</h2><label>Nome<input value={newProduct.name} onChange={e => setNewProduct({ ...newProduct, name: e.target.value })} /></label><label>Preço (R$)<input inputMode="decimal" value={newProduct.price} onChange={e => setNewProduct({ ...newProduct, price: e.target.value })} /></label><label>Quantidade<input type="number" min="0" value={newProduct.stock} onChange={e => setNewProduct({ ...newProduct, stock: e.target.value })} /></label><button onClick={() => action(async () => { await api('/products', { method: 'POST', body: { name: newProduct.name, price_cents: Math.round(Number(newProduct.price.replace(',', '.')) * 100), stock: Number(newProduct.stock) } }); setNewProduct({ name: '', price: '', stock: '0' }); await refresh() })}>Cadastrar produto</button></section>}
-        {tab === 'ia' && <section className="panel"><p className="hint">Simulador local: não envia mensagens reais e não utiliza Gemini nesta versão.</p><label>Nome do cliente<input value={name} onChange={e => setName(e.target.value)} /></label><label>Telefone<input inputMode="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="27999999999" /></label><label>Mensagem do cliente<textarea value={msg} onChange={e => setMsg(e.target.value)} placeholder="Quero o de sempre" /></label><button disabled={busy} onClick={simulate}>Simular mensagem</button>{chat && <div className="reply">🤖 {chat}</div>}{suggested.length > 0 && <><p><strong>Itens sugeridos (revise antes de confirmar):</strong></p>{suggested.map((x, i) => <div className="product" key={i}>{products.find(p => p.id === x.product_id)?.name || 'Produto'} × {x.quantity}</div>)}<button disabled={busy || suggested.some(item => {
-  const produto = products.find(p => p.id === item.product_id);
-  return !produto || produto.stock < item.quantity;
-})} onClick={() => order('whatsapp-simulated', suggested)}>Confirmar pedido simulado</button></>}</section>}
-    </main><nav>{[['novo', '➕', 'Pedido'], ['pedidos', '📋', 'Pedidos'], ['estoque', '📦', 'Estoque'], ['ia', '🤖', 'IA']].map(([id, ico, label]) => <button className={tab === id ? 'active' : ''} key={id} onClick={() => { setError(''); setTab(id); refresh().catch(() => { }) }}><span>{ico}</span><small>{label}</small></button>)}</nav></>
+    const [logged, setLogged] = useState(null);
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [tab, setTab] = useState('dashboard');
+    const [products, setProducts] = useState([]);
+    const [orders, setOrders] = useState([]);
+    const [dashboard, setDashboard] = useState(null);
+    const [cart, setCart] = useState({});
+    const [name, setName] = useState('');
+    const [phone, setPhone] = useState('');
+    const [msg, setMsg] = useState('');
+    const [chat, setChat] = useState('');
+    const [suggested, setSuggested] = useState([]);
+    const [error, setError] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [storeName, setStoreName] = useState('');
+    const [connectionError, setConnectionError] = useState('');
+    const [syncError, setSyncError] = useState('');
+    const [success, setSuccess] = useState('');
+    const [more, setMore] = useState(false);
+    const pending = useRef(null);
+    const acting = useRef(false);
+    const refreshVersion = useRef(0);
+
+    async function refresh() {
+        const version = ++refreshVersion.current;
+        try {
+            const [catalog, list, summary, settings] = await Promise.all([api('/products'), api('/orders'), api('/dashboard'), api('/settings')]);
+            if (version !== refreshVersion.current) return;
+            setProducts(catalog);
+            setOrders(list);
+            setDashboard(summary);
+            setStoreName(settings.name);
+            setSyncError('');
+        } catch (err) {
+            if (version !== refreshVersion.current) return;
+            if (err.status === 401) {
+                setError('Sua sessão expirou. Entre novamente.');
+                setLogged(false);
+                return;
+            }
+            setSyncError(err.message);
+        }
+    }
+
+    function checkSession() {
+        setConnectionError('');
+        api('/me').then(() => setLogged(true)).catch(err => {
+            if (err.status === 401) setLogged(false);
+            else setConnectionError(err.message);
+        });
+    }
+    useEffect(() => {
+        checkSession();
+    }, []);
+
+    useEffect(() => {
+        if (!logged) return;
+        refresh();
+        const timer = setInterval(refresh, 10000);
+        return () => { clearInterval(timer); refreshVersion.current++; };
+    }, [logged]);
+
+    async function action(fn, confirmation) {
+        if (acting.current) return;
+        acting.current = true;
+        setError('');
+        setSuccess('');
+        setBusy(true);
+        try {
+            await fn();
+            if (confirmation) setSuccess(confirmation);
+        } catch (e) { setError(e.message); } finally {
+            acting.current = false;
+            setBusy(false);
+        }
+    }
+
+    function login(event) {
+        event.preventDefault();
+        action(async () => {
+            await api('/login', { method: 'POST', body: { email, password } });
+            setPassword('');
+            setLogged(true);
+        });
+    }
+
+    function quantity(product, delta) {
+        setCart(previous => ({
+            ...previous, [product.id]: Math.max(0, Math.min(product.stock, 100, (previous[product.id] || 0) + delta))
+        }));
+    }
+
+    function order(source = 'counter', items = null) {
+        action(async () => {
+            const selected = items || Object.entries(cart).filter(([, qty]) => qty > 0)
+                .map(([id, quantity]) => ({ product_id: Number(id), quantity }));
+            if (!selected.length) throw new Error('Selecione produtos.');
+            const sale = { name, phone: phone.replace(/\D/g, ''), source, items: selected };
+            const fingerprint = JSON.stringify(sale);
+            if (pending.current?.fingerprint !== fingerprint) {
+                // Idempotency key is public-irrelevant and needs uniqueness, including on private HTTP LAN.
+                const key = Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('');
+                pending.current = { fingerprint, key };
+            }
+            await api('/orders', { method: 'POST', body: { ...sale, external_key: pending.current.key } });
+            pending.current = null;
+            setCart({});
+            setSuggested([]);
+            setChat('Pedido registrado com sucesso.');
+            setTab('pedidos');
+            await refresh();
+        }, 'Pedido registrado com sucesso.');
+    }
+
+    function simulate() {
+        action(async () => {
+            const data = await api('/simulate', { method: 'POST', body: { phone: phone.replace(/\D/g, ''), message: msg } });
+            setChat(data.reply);
+            setSuggested(data.suggested_items || []);
+        });
+    }
+
+    const customerFields = <>
+        <label>Nome do cliente<input value={name} onChange={e => setName(e.target.value)} /></label>
+        <label>Telefone com DDD<input type="tel" value={phone} onChange={e => setPhone(e.target.value)} /></label>
+    </>;
+
+    if (logged === null) return <main className="login"><section className="panel">
+        <Brand />
+        {connectionError ? <Notice onRetry={checkSession}>{connectionError}</Notice> : <Loading>Verificando sessão…</Loading>}
+    </section></main>;
+    if (!logged) return <main className="login">
+        <form onSubmit={login} className="panel">
+            <Brand />
+            <h1>Entrar no painel</h1>
+            <p>Gerencie pedidos, catálogo e estoque em um só lugar.</p>
+            <label>E-mail<input value={email} onChange={e => setEmail(e.target.value)} type="email" autoComplete="username" required /></label>
+            <label>Senha<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required /></label>
+            <button disabled={busy}>{busy ? 'Entrando…' : 'Entrar'}</button>
+            {error && <Notice>{error}</Notice>}
+            <a href="/cardapio">Abrir cardápio público</a>
+        </form>
+    </main>;
+
+    function navigate(id) {
+        setError('');
+        setSuccess('');
+        setMore(false);
+        setTab(id);
+        window.scrollTo(0, 0);
+    }
+    function navigation([id, label, Icon]) {
+        return <button key={id} type="button" className={tab === id ? 'active' : ''} aria-current={tab === id ? 'page' : undefined}
+            onClick={() => navigate(id)}><Icon size={20} /><span>{label}</span></button>;
+    }
+    function logout() {
+        action(async () => {
+                await api('/logout', { method: 'POST' });
+                setLogged(false);
+                setProducts([]);
+                setOrders([]);
+                setDashboard(null);
+                setCart({});
+                setName('');
+                setPhone('');
+                setChat('');
+                setMsg('');
+                setSuggested([]);
+                pending.current = null;
+                setTab('dashboard');
+        });
+    }
+    const sectionTitle = tabs.find(([id]) => id === tab)[1];
+
+    return <div className="admin-shell">
+        <aside className="sidebar">
+            <button type="button" className="brand-button" onClick={() => navigate('dashboard')}><Brand /></button>
+            <nav aria-label="Navegação administrativa" className="side-nav">{tabs.map(navigation)}</nav>
+            <button type="button" className="sidebar-logout" onClick={logout}><LogOut size={19} /> Sair da conta</button>
+        </aside>
+        <header className="topbar">
+            <button type="button" className="brand-button mobile-brand" onClick={() => navigate('dashboard')} aria-label="Visão geral"><Brand /></button>
+            <strong className="store-name">{storeName || 'GaletoBot'}</strong>
+            <div className="top-actions">
+                <a className="button secondary small" href="/cardapio"><ArrowUpRight size={17} /><span>Cardápio</span></a>
+                <button type="button" className="small primary top-order" onClick={() => navigate('novo')}><Plus size={18} /> Novo pedido</button>
+            </div>
+        </header>
+        <nav aria-label="Atalhos do painel" className="mobile-nav">
+            {quickTabs.map(id => navigation(tabs.find(item => item[0] === id)))}
+            <button type="button" className={!quickTabs.includes(tab) ? 'active' : ''} onClick={() => setMore(true)} aria-expanded={more}><Menu size={20} /><span>Mais</span></button>
+        </nav>
+        {more && <Dialog title="Navegação" onClose={() => setMore(false)}>
+            <nav className="more-nav" aria-label="Outros módulos">{tabs.filter(([id]) => !quickTabs.includes(id)).map(navigation)}
+                <button type="button" className="secondary" onClick={() => { setMore(false); logout(); }}><LogOut size={19} /> Sair da conta</button>
+            </nav>
+        </Dialog>}
+        <main className="container admin-main" aria-busy={busy}>
+            <div className="page-heading"><h1>{sectionTitle}</h1></div>
+            {syncError && <Notice onRetry={refresh}>{syncError}</Notice>}
+            {error && <Notice>{error}</Notice>}
+            {success && <Notice kind="success">{success}</Notice>}
+            {!dashboard && !syncError && <Loading>Carregando operação…</Loading>}
+            {tab === 'dashboard' && dashboard && <Dashboard data={dashboard} orders={orders} navigate={navigate} />}
+            {tab === 'pedidos' && dashboard && <Orders {...{ orders, refresh, action, busy, error }} />}
+            {tab === 'produtos' && dashboard && <Products {...{ products, refresh, action, busy, error }} />}
+            {tab === 'estoque' && dashboard && <Stock {...{ products, refresh, action, busy, error }} />}
+            {tab === 'clientes' && <Customers action={action} />}
+            {tab === 'settings' && <Settings {...{ action, busy, refresh }} />}
+            {tab === 'novo' && <>
+                <section className="panel"><h2>Cliente</h2>{customerFields}</section>
+                <section className="panel">
+                    <h2>Selecione os itens</h2>
+                    {products.filter(p => p.active || cart[p.id]).map(product => <div className="product" key={product.id}>
+                        <div className="item-identity"><ProductPhoto url={product.image_url} name={product.name} /><div><strong>{product.name}</strong><small>{money(product.price_cents)} · {product.active ? product.stock + ' disponíveis' : 'Inativo'}</small></div></div>
+                        <div className="qty">
+                            <button className="secondary" aria-label={'Remover ' + product.name} onClick={() => quantity(product, -1)}>−</button>
+                            <b>{cart[product.id] || 0}</b>
+                            <button aria-label={'Adicionar ' + product.name} disabled={!product.active || (cart[product.id] || 0) >= Math.min(product.stock, 100)}
+                                onClick={() => quantity(product, 1)}>+</button>
+                        </div>
+                    </div>)}
+                    <p className="total">Total estimado <strong>{money(products.reduce((sum, p) => sum + p.price_cents * (cart[p.id] || 0), 0))}</strong></p>
+                    <button disabled={busy} onClick={() => order()}>Confirmar pedido de balcão</button>
+                </section>
+            </>}
+            {tab === 'ia' && <section className="panel">
+                <h2>Simulador de atendimento</h2>
+                <p>O simulador usa o histórico local. Confirmar uma simulação consome estoque do banco selecionado.</p>
+                {customerFields}
+                <label>Mensagem<textarea value={msg} onChange={e => setMsg(e.target.value)} placeholder="Quero o de sempre" /></label>
+                <button disabled={busy} onClick={simulate}>Simular mensagem</button>
+                {chat && <p className="reply">{chat}</p>}
+                {suggested.map((item, index) => <div className="product" key={index}>
+                    {products.find(p => p.id === item.product_id)?.name || 'Produto'} × {item.quantity}
+                </div>)}
+                {suggested.length > 0 && <button disabled={busy || suggested.some(item => {
+                    const product = products.find(p => p.id === item.product_id);
+                    return !product?.active || product.stock < item.quantity;
+                })} onClick={() => order('whatsapp-simulated', suggested)}>Confirmar pedido simulado</button>}
+            </section>}
+        </main>
+    </div>;
 }
-createRoot(document.getElementById('root')).render(<App />);
+
+createRoot(document.getElementById('root')).render(/^\/cardapio\/?$/.test(location.pathname) ? <PublicMenu /> : <App />);
