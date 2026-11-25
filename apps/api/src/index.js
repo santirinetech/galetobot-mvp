@@ -8,6 +8,7 @@ import { createOrderService, orderSchema, OrderUnavailableError } from './orders
 import { createConversationService, CART_CLEANUP_INTERVAL_MS } from './conversations.js';
 import { createChatService } from './chat-service.js';
 import { createChatRouters, readChatConfig } from './chat-http.js';
+import { controlToken, controlUrl, createWhatsAppAdmin } from './whatsapp-control.js';
 import { integrationAuth, conversationHandler, contextHandler, resumeHandler } from './integrations.js';
 import { counterPaymentSchema, createStoreCheckout, createStoreRouter, productFields } from './store.js';
 import cookieParser from 'cookie-parser';
@@ -170,6 +171,9 @@ if (mode === 'hosted') {
     });
 }
 if (enableStore) {
+    app.use('/api/admin/whatsapp', createWhatsAppAdmin({
+        auth, csrf, url: controlUrl(process.env.WHATSAPP_CONTROL_URL), token: controlToken(process.env)
+    }));
     app.get('/api/conversation-handoffs', auth, (_req, res) => res.json(conversations.listHandoffs()));
     app.post('/api/conversation-handoffs/resume', auth, csrf, resumeHandler(conversations));
 }
