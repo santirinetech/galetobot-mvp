@@ -221,11 +221,23 @@ export function createStoreRouter(db, orders, checkout, auth, csrf) {
     }));
     router.get('/dashboard', auth, (_req, res) => {
         const today = storeDay.format(new Date());
-        const recent = db.prepare("SELECT * FROM orders WHERE created_at >= datetime('now','-2 days') AND source <> 'whatsapp-simulated'").all()
+        const recent = db.prepare(`SELECT o.status,o.total_cents,o.created_at,o.source,p.status AS payment_status
+            FROM orders o LEFT JOIN order_payments p ON p.order_id=o.id
+            WHERE o.created_at >= datetime('now','-2 days') AND o.source <> 'whatsapp-simulated'`).all()
             .filter(order => storeDay.format(new Date(order.created_at.replace(' ', 'T') + 'Z')) === today);
+        const received = db.prepare(`SELECT o.total_cents,p.received_at FROM order_payments p JOIN orders o ON o.id=p.order_id
+            WHERE p.status='received' AND p.received_at>=datetime('now','-2 days') AND o.source <> 'whatsapp-simulated'`).all()
+            .filter(payment => storeDay.format(new Date(payment.received_at.replace(' ', 'T') + 'Z')) === today);
+        const channels = new Map();
+        for (const order of recent) channels.set(order.source, (channels.get(order.source) ?? 0) + 1);
         res.json({
             today: recent.length, pending: recent.filter(o => o.status === 'pending').length,
             total_cents: recent.reduce((sum, o) => sum + o.total_cents, 0),
+            received_today_cents: received.reduce((sum, order) => sum + order.total_cents, 0),
+            received_today: received.length,
+            orders_pending_payment: recent.filter(order => order.payment_status === 'pending').length,
+            orders_without_payment: recent.filter(order => order.payment_status === null).length,
+            channels: [...channels].map(([source, count]) => ({ source, count })),
             low_stock: db.prepare('SELECT id,name,stock FROM products WHERE active=1 AND stock<=2 ORDER BY stock,name').all()
         });
     });

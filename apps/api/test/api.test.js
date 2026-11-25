@@ -209,7 +209,12 @@ test('API HTTP isolada cobre regressões, erros seguros e reenvio após perda da
         assert.equal(movements[0].reason, 'Reposição');
         await storeRequest('/products/1', { method: 'PATCH', admin: true, body: { active: false } });
         assert.ok(!(await storeRequest('/menu')).products.some(product => product.id === 1));
-        assert.equal((await storeRequest('/dashboard', { admin: true })).today, 3);
+        const operationalSummary = await storeRequest('/dashboard', { admin: true });
+        assert.equal(operationalSummary.today, 3);
+        assert.equal(operationalSummary.received_today_cents, 0);
+        assert.equal(operationalSummary.orders_pending_payment, 2);
+        assert.equal(operationalSummary.orders_without_payment, 1);
+        assert.equal(operationalSummary.channels.reduce((sum, channel) => sum + channel.count, 0), 3);
 
         // Run the sanitized workflow's Code node against Gemini-shaped fixtures.
         const workflow = JSON.parse(fs.readFileSync(new URL('../../../docs/n8n/galetobot-kodie-gemini-ia.json', import.meta.url), 'utf8'));
@@ -419,6 +424,10 @@ test('API HTTP isolada cobre regressões, erros seguros e reenvio após perda da
         assert.deepEqual(await storeRequest('/orders/6/payment', { ...markPayment, admin: true }), received);
         assert.equal(db.prepare("SELECT COUNT(*) FROM audit WHERE action='pix_received'").pluck().get(), 1);
         assert.equal((await storeRequest('/orders/6', { admin: true })).status, 'confirmed');
+        const receivedSummary = await storeRequest('/dashboard', { admin: true });
+        assert.equal(receivedSummary.received_today_cents, 7200);
+        assert.equal(receivedSummary.received_today, 1);
+        assert.ok(receivedSummary.total_cents > receivedSummary.received_today_cents);
         assert.equal((await storeRequest('/orders', { admin: true }))[0].id, 6);
         assert.equal(db.prepare('SELECT COUNT(*) FROM stock_movements WHERE order_id=6').pluck().get(), 3);
         assert.equal(db.prepare('SELECT stock FROM products WHERE id=?').pluck().get(farofa.id), 7);

@@ -78,5 +78,6 @@ export function Feedback({ kind = 'empty', title, children, onRetry }) {
 }
 
 export function Amount({ cents }) {
-    return <span className="ds-amount">{money(cents)}</span>;
+    const formatted = money(cents);
+    return <span className={'ds-amount' + (formatted.length > 15 ? ' ds-amount--long' : '')}>{formatted}</span>;
 }

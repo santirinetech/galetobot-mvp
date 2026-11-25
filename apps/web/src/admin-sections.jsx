@@ -1,5 +1,5 @@
 ﻿import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowDownLeft, ArrowRight, ArrowUpRight, Boxes, ClipboardList, Clock3, Package, Pencil, Plus, RefreshCw, Search, ShoppingBag, Wallet } from 'lucide-react';
+import { ArrowDownLeft, ArrowRight, ArrowUpRight, Package, Pencil, Plus, RefreshCw, Search } from 'lucide-react';
 import { api, money, nextStatus, sources, statuses } from './client.js';
 import { Badge, Dialog, Empty, formatDate, Loading, Notice, OrderStatus, ProductPhoto } from './ui.jsx';
 import { WhatsAppSettings } from './whatsapp-settings.jsx';
@@ -30,52 +30,6 @@ function StockLevel({ stock }) {
     return <Badge tone={stock === 0 ? 'danger' : stock <= 2 ? 'warning' : 'success'}>
         {stock === 0 ? 'Esgotado' : stock <= 2 ? 'Estoque baixo' : 'Em estoque'}
     </Badge>;
-}
-
-export function Dashboard({ data, orders, navigate }) {
-    const metrics = [
-        ['Pedidos de hoje', data.today, ShoppingBag, 'mint'],
-        ['Faturamento do dia', money(data.total_cents), Wallet, 'peach'],
-        ['Pendentes de hoje', data.pending, Clock3, 'sand'],
-        ['Itens com estoque baixo', data.low_stock.length, Boxes, 'blue']
-    ];
-    return <>
-        <section className="dashboard-hero">
-            <div><p className="hero-date">{new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Sao_Paulo' })}</p>
-                <h2>Operação de hoje</h2>
-                <p>Acompanhe as vendas e mantenha o estoque em dia.</p>
-            </div>
-            <div className="hero-actions">
-                <button className="accent" onClick={() => navigate('novo')}><Plus size={19} /> Pedido de balcão</button>
-                <button className="hero-secondary" onClick={() => navigate('pedidos')}><ClipboardList size={18} /> Ver pedidos</button>
-            </div>
-        </section>
-        <section className="metrics" aria-label="Indicadores do dia">
-            {metrics.map(([label, value, Icon, tone]) => <article className="panel metric" key={label}>
-                <span className={'metric-icon ' + tone}><Icon size={22} /></span>
-                <div><span>{label}</span><strong>{value}</strong></div>
-            </article>)}
-        </section>
-        <div className="dashboard-grid">
-            <section className="panel dashboard-recent">
-                <PanelHeading title="Pedidos recentes"><button className="text-button" onClick={() => navigate('pedidos')}>Ver todos <ArrowRight size={17} /></button></PanelHeading>
-                {!orders.length ? <Empty>Nenhum pedido registrado.</Empty> : <div className="recent-list">
-                    {orders.slice(0, 5).map(order => <div className="recent-row" key={order.id}>
-                        <span className="recent-icon"><ShoppingBag size={19} /></span>
-                        <div className="recent-client"><strong>#{order.id} · {order.customer_name || 'Cliente'}</strong><small>{source(order)} · {formatDate(order.created_at, { timeStyle: 'short' })}</small></div>
-                        <OrderStatus status={order.status} /><strong className="recent-total">{money(order.total_cents)}</strong>
-                    </div>)}
-                </div>}
-            </section>
-            <section className="panel dashboard-stock">
-                <PanelHeading title="Atenção ao estoque"><button className="text-button icon-button" aria-label="Abrir estoque" onClick={() => navigate('estoque')}><ArrowUpRight size={19} /></button></PanelHeading>
-                {!data.low_stock.length ? <Empty>Nenhum produto com estoque baixo.</Empty> : data.low_stock.slice(0, 5).map(product => <div className="stock-preview" key={product.id}>
-                    <span className="metric-icon peach"><Package size={18} /></span><strong>{product.name}</strong>
-                    <Badge tone={product.stock ? 'warning' : 'danger'}>{product.stock} un.</Badge>
-                </div>)}
-            </section>
-        </div>
-    </>;
 }
 
 export function Orders({ orders, refresh, action, busy, error }) {
