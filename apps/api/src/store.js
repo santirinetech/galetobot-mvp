@@ -55,7 +55,20 @@ export function createStoreCheckout(db, orders) {
             address: data.fulfillment === 'delivery' ? data.address : ''
         };
         const quote = orders.quoteOrder(data.items);
-        return { checkout, lines: quote.lines, subtotal_cents: quote.total_cents, total_cents: quote.total_cents + shipping_cents };
+        const total_cents = quote.total_cents + shipping_cents;
+        if (payment.toLowerCase() === 'dinheiro') {
+            const tendered = data.cash_tendered_cents;
+            if (tendered != null) {
+                if (!Number.isSafeInteger(tendered) || tendered < total_cents || tendered > 100_000_000) {
+                    throw new OrderUnavailableError('O valor em dinheiro deve cobrir o total com frete. Informe outro valor para troco.');
+                }
+                checkout.cash_tendered_cents = tendered;
+                checkout.change_cents = tendered - total_cents;
+            } else if (data.no_change === true) {
+                checkout.change_cents = 0;
+            }
+        }
+        return { checkout, lines: quote.lines, subtotal_cents: quote.total_cents, total_cents };
     }
 
     return { settings, summarize };
@@ -78,6 +91,20 @@ export function createStoreRouter(db, orders, checkout, auth, csrf) {
     const router = Router();
     const { settings, summarize } = checkout;
     const orderById = db.prepare('SELECT o.*, c.name customer_name, c.phone FROM orders o LEFT JOIN customers c ON c.id=o.customer_id WHERE o.id=?');
+    const paymentByOrder = db.prepare('SELECT * FROM order_payments WHERE order_id=?');
+    const markReceived = db.prepare(`UPDATE order_payments SET status='received',
+        received_at=CURRENT_TIMESTAMP, received_by=? WHERE order_id=? AND status='pending'`);
+    const auditPayment = db.prepare("INSERT INTO audit(action,detail) VALUES('pix_received',?)");
+    const receivePix = db.transaction((id, operator) => {
+        const payment = paymentByOrder.get(id);
+        if (payment?.method.toLowerCase() !== 'pix') {
+            throw new OrderUnavailableError('Este pedido não tem um pagamento Pix registrado.');
+        }
+        if (markReceived.run(operator, id).changes) {
+            auditPayment.run(JSON.stringify({ order_id: payment.order_id, user_id: operator }));
+        }
+        return paymentByOrder.get(id);
+    }).immediate;
     const stockMovement = db.prepare('INSERT INTO stock_movements(product_id,delta,balance,reason) SELECT id,?,stock,? FROM products WHERE id=?');
     const saveQuote = db.prepare('INSERT INTO site_checkouts(token,request,summary,expires_at) VALUES(?,?,?,?)');
     const getCheckout = db.prepare('SELECT * FROM site_checkouts WHERE token=?');
@@ -154,8 +181,14 @@ export function createStoreRouter(db, orders, checkout, auth, csrf) {
         if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
         const items = db.prepare(`SELECT i.*, COALESCE(i.product_name,p.name) name FROM order_items i
             JOIN products p ON p.id=i.product_id WHERE i.order_id=? ORDER BY i.id`).all(order.id);
-        return res.json({ ...order, items, details: JSON.parse(order.checkout_details ?? 'null') });
+        return res.json({ ...order, items, details: JSON.parse(order.checkout_details ?? 'null'),
+            payment: paymentByOrder.get(order.id) ?? null });
     });
+    router.patch('/orders/:id/payment', auth, csrf, withBody(z.strictObject({ status: z.literal('received') }),
+        (_data, req, res) => {
+            if (!orderById.get(req.params.id)) return res.status(404).json({ error: 'Pedido não encontrado.' });
+            return res.json(receivePix(req.params.id, req.userId));
+        }));
     router.patch('/orders/:id/status', auth, csrf, withBody(z.object({ status: text(25) }), ({ status }, req, res) => {
         const order = orderById.get(req.params.id);
         if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });

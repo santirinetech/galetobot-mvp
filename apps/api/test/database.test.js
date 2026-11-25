@@ -199,7 +199,7 @@ test('esquema expandido é opt-in e preserva o nome e preço registrados em pedi
     const { projectRoot } = temporaryProject(t);
     const legacy = initializeDatabase({ projectRoot, allowCreate: true, ...admin });
     try {
-        assert.equal(legacy.prepare("SELECT COUNT(*) FROM sqlite_master WHERE name='site_checkouts'").pluck().get(), 0);
+        assert.equal(legacy.prepare("SELECT COUNT(*) FROM sqlite_master WHERE name IN ('site_checkouts','order_payments')").pluck().get(), 0);
         legacy.exec(`
             INSERT INTO orders (id,source,total_cents) VALUES (1,'counter',4500);
             INSERT INTO order_items (order_id,product_id,quantity,unit_price_cents) VALUES (1,1,1,4500);
@@ -219,6 +219,8 @@ test('esquema expandido é opt-in e preserva o nome e preço registrados em pedi
         const line = reopened.prepare('SELECT product_name,unit_price_cents FROM order_items').get();
         assert.deepEqual(line, { product_name: 'Galeto', unit_price_cents: 4500 });
         assert.equal(reopened.prepare('SELECT total_cents FROM orders WHERE id=1').pluck().get(), 4500);
+        assert.equal(reopened.prepare('SELECT COUNT(*) FROM order_payments').pluck().get(), 0);
+        assert.deepEqual(reopened.pragma('foreign_key_check'), []);
     } finally {
         reopened.close();
     }

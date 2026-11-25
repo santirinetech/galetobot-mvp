@@ -23,6 +23,8 @@ export function createOrderService(db, { enableStore = false } = {}) {
     const decrementStock = db.prepare('UPDATE products SET stock=stock-? WHERE id=? AND active=1 AND stock>=?');
     const saveItem = db.prepare('INSERT INTO order_items(order_id,product_id,quantity,unit_price_cents) VALUES(?,?,?,?)');
     const storeOrder = enableStore && db.prepare('UPDATE orders SET status=?, checkout_details=? WHERE id=?');
+    const savePayment = enableStore && db.prepare(
+        'INSERT INTO order_payments(order_id,method,cash_tendered_cents,change_cents) VALUES(?,?,?,?)');
     const nameItem = enableStore && db.prepare('UPDATE order_items SET product_name=? WHERE id=?');
     const movement = enableStore && db.prepare('INSERT INTO stock_movements(product_id,delta,balance,reason,order_id) SELECT id,?,stock,?,? FROM products WHERE id=?');
     const auditOrder = db.prepare('INSERT INTO audit(action,detail) VALUES(?,?)');
@@ -62,6 +64,9 @@ export function createOrderService(db, { enableStore = false } = {}) {
         if (enableStore) {
             const status = ['whatsapp', 'site'].includes(order.source) ? 'pending' : 'confirmed';
             storeOrder.run(status, details ? JSON.stringify(details) : null, id);
+            if (details?.payment) {
+                savePayment.run(id, details.payment, details.cash_tendered_cents ?? null, details.change_cents ?? null);
+            }
         }
         for (const line of lines) {
             if (!decrementStock.run(line.quantity, line.product_id, line.quantity).changes) {

@@ -108,12 +108,25 @@ export function Orders({ orders, refresh, action, busy, error }) {
                 <div><dt>Cliente</dt><dd>{details.details?.name || details.customer_name || '—'}</dd></div>
                 <div><dt>Telefone</dt><dd>{details.phone || '—'}</dd></div>
                 <div><dt>Recebimento</dt><dd>{details.details ? details.details.fulfillment === 'delivery' ? `Entrega · ${details.details.address}, ${details.details.region}` : 'Retirada' : 'Não informado'}</dd></div>
-                <div><dt>Pagamento</dt><dd>{details.details?.payment || 'Não informado'}</dd></div>
+                <div><dt>Pagamento</dt><dd>{details.payment?.method || details.details?.payment || 'Não informado'}</dd></div>
+                <div><dt>Situação do pagamento</dt><dd>{details.payment?.status === 'received' ? 'Recebido' :
+                    details.payment ? 'Aguardando recebimento' : 'Sem registro de pagamento'}</dd></div>
+                {details.payment?.cash_tendered_cents != null && <div><dt>Valor entregue</dt>
+                    <dd>{money(details.payment.cash_tendered_cents)}</dd></div>}
+                {details.payment?.change_cents != null && <div><dt>Troco</dt><dd>{money(details.payment.change_cents)}</dd></div>}
             </dl>
             <h3>Itens</h3>
             {details.items.map(item => <div key={item.id} className="product"><span>{item.quantity} × {item.name}</span><strong>{money(item.quantity * item.unit_price_cents)}</strong></div>)}
             {details.details && <p className="total"><span>Frete</span><span>{money(details.details.shipping_cents)}</span></p>}
             <p className="total"><strong>Total</strong><strong>{money(details.total_cents)}</strong></p>
+            {details.payment?.method.toLowerCase() === 'pix' && details.payment.status === 'pending' &&
+                <button className="secondary full" disabled={busy} onClick={() => {
+                    if (!window.confirm('Você conferiu o recebimento deste Pix?')) return;
+                    action(async () => {
+                        await api(`/orders/${details.id}/payment`, { method: 'PATCH', body: { status: 'received' } });
+                        await open(details.id);
+                    }, 'Recebimento do Pix registrado.');
+                }}>Registrar Pix recebido</button>}
             {nextStatus[details.status] && <button className="full" disabled={busy} onClick={() => action(async () => {
                 await api(`/orders/${details.id}/status`, { method: 'PATCH', body: { status: nextStatus[details.status] } });
                 await open(details.id);

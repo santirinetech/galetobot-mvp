@@ -16,6 +16,17 @@ export function initializeStoreSchema(db) {
     }
     db.exec(`
         CREATE TABLE IF NOT EXISTS store_settings (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS order_payments (
+            order_id INTEGER PRIMARY KEY REFERENCES orders(id),
+            method TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','received')),
+            cash_tendered_cents INTEGER CHECK(cash_tendered_cents >= 0),
+            change_cents INTEGER CHECK(change_cents >= 0),
+            received_at TEXT,
+            received_by INTEGER REFERENCES users(id),
+            CHECK((status='pending' AND received_at IS NULL AND received_by IS NULL)
+               OR (status='received' AND received_at IS NOT NULL AND received_by IS NOT NULL))
+        );
         CREATE TABLE IF NOT EXISTS stock_movements (
             id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id),
             delta INTEGER NOT NULL, balance INTEGER NOT NULL CHECK(balance>=0), reason TEXT NOT NULL,
