@@ -1,20 +1,13 @@
 ﻿import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowUpRight, Boxes, ClipboardList, FlaskConical, LayoutDashboard, LogOut, Menu, Package, Plus, Settings as SettingsIcon, ShoppingBag, Users } from 'lucide-react';
+import { AdminShell } from './admin-shell.jsx';
 import { api, money } from './client.js';
 import { Customers, Dashboard, Orders, Products, Settings, Stock } from './admin-sections.jsx';
 import { PublicMenu } from './public-menu.jsx';
 import { Chat } from './chat.jsx';
 import { emptyPayment, PaymentFields, paymentPayload } from './payment-fields.jsx';
-import { Brand, Dialog, Loading, Notice, ProductPhoto } from './ui.jsx';
+import { Brand, Loading, Notice, ProductPhoto } from './ui.jsx';
 import './style.css';
-
-const tabs = [
-    ['dashboard', 'Visão geral', LayoutDashboard], ['pedidos', 'Pedidos', ClipboardList], ['novo', 'Balcão', ShoppingBag],
-    ['produtos', 'Produtos', Package], ['estoque', 'Estoque', Boxes], ['clientes', 'Clientes', Users],
-    ['settings', 'Configurações', SettingsIcon], ['ia', 'Laboratório IA', FlaskConical]
-];
-const quickTabs = ['pedidos', 'novo', 'produtos', 'estoque'];
 
 function App() {
     const [logged, setLogged] = useState(null);
@@ -35,7 +28,6 @@ function App() {
     const [connectionError, setConnectionError] = useState('');
     const [syncError, setSyncError] = useState('');
     const [success, setSuccess] = useState('');
-    const [more, setMore] = useState(false);
     const pending = useRef(null);
     const acting = useRef(false);
     const refreshVersion = useRef(0);
@@ -156,13 +148,8 @@ function App() {
     function navigate(id) {
         setError('');
         setSuccess('');
-        setMore(false);
         setTab(id);
         window.scrollTo(0, 0);
-    }
-    function navigation([id, label, Icon]) {
-        return <button key={id} type="button" className={tab === id ? 'active' : ''} aria-current={tab === id ? 'page' : undefined}
-            onClick={() => navigate(id)}><Icon size={20} /><span>{label}</span></button>;
     }
     function logout() {
         action(async () => {
@@ -179,33 +166,7 @@ function App() {
                 setTab('dashboard');
         });
     }
-    const sectionTitle = tabs.find(([id]) => id === tab)[1];
-
-    return <div className="admin-shell">
-        <aside className="sidebar">
-            <button type="button" className="brand-button" onClick={() => navigate('dashboard')}><Brand /></button>
-            <nav aria-label="Navegação administrativa" className="side-nav">{tabs.map(navigation)}</nav>
-            <button type="button" className="sidebar-logout" onClick={logout}><LogOut size={19} /> Sair da conta</button>
-        </aside>
-        <header className="topbar">
-            <button type="button" className="brand-button mobile-brand" onClick={() => navigate('dashboard')} aria-label="Visão geral"><Brand /></button>
-            <strong className="store-name">{storeName || 'GaletoBot'}</strong>
-            <div className="top-actions">
-                <a className="button secondary small" href="/cardapio"><ArrowUpRight size={17} /><span>Cardápio</span></a>
-                <button type="button" className="small primary top-order" onClick={() => navigate('novo')}><Plus size={18} /> Novo pedido</button>
-            </div>
-        </header>
-        <nav aria-label="Atalhos do painel" className="mobile-nav">
-            {quickTabs.map(id => navigation(tabs.find(item => item[0] === id)))}
-            <button type="button" className={!quickTabs.includes(tab) ? 'active' : ''} onClick={() => setMore(true)} aria-expanded={more}><Menu size={20} /><span>Mais</span></button>
-        </nav>
-        {more && <Dialog title="Navegação" onClose={() => setMore(false)}>
-            <nav className="more-nav" aria-label="Outros módulos">{tabs.filter(([id]) => !quickTabs.includes(id)).map(navigation)}
-                <button type="button" className="secondary" onClick={() => { setMore(false); logout(); }}><LogOut size={19} /> Sair da conta</button>
-            </nav>
-        </Dialog>}
-        <main className="container admin-main" aria-busy={busy}>
-            <div className="page-heading"><h1>{sectionTitle}</h1></div>
+    return <AdminShell {...{ tab, navigate, logout, storeName, busy }}>
             {syncError && <Notice onRetry={refresh}>{syncError}</Notice>}
             {error && <Notice>{error}</Notice>}
             {success && <Notice kind="success">{success}</Notice>}
@@ -235,8 +196,7 @@ function App() {
                 </section>
             </>}
             {tab === 'ia' && <Chat lab />}
-        </main>
-    </div>;
+    </AdminShell>;
 }
 
 createRoot(document.getElementById('root')).render(/^\/cardapio\/?$/.test(location.pathname) ? <PublicMenu /> : <App />);
