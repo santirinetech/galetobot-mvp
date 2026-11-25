@@ -36,9 +36,12 @@
 .chat-tabs button[aria-pressed="true"] { background: #d8e9dc; }
 .chat-contact, .chat-retry, .chat-thread > .notice { margin: 7px 12px; }
 .chat-fallback { align-self: flex-start; white-space: normal; margin: 4px 12px; }
+.public-chat-entry { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; }
+.dialog:has(.chat-workspace) { width: min(900px, calc(100% - 24px)); }
 @media (max-width: 680px) {
     .chat-workspace { grid-template-columns: minmax(0, 1fr); }
     .chat-details { border-left: 0; border-top: 1px solid #e3e9e4; }
     .chat-history { height: clamp(210px, 37vh, 390px); height: clamp(210px, 37dvh, 390px); }
     .chat-top { flex-wrap: wrap; }
+    .dialog:has(.chat-workspace) { width: calc(100% - 12px); max-height: calc(100dvh - 12px); }
 }

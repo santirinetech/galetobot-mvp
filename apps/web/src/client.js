@@ -1,5 +1,5 @@
 export const money = cents => (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-export const sources = { counter: 'Balcão', site: 'Site', whatsapp: 'WhatsApp', 'whatsapp-simulated': 'Simulação' };
+export const sources = { counter: 'Balcão', site: 'Site', 'web-chat': 'Chat Web', whatsapp: 'WhatsApp', 'whatsapp-simulated': 'Simulação' };
 export const statuses = { pending: 'Pendente', confirmed: 'Confirmado', preparing: 'Em preparo', ready: 'Pronto', completed: 'Concluído' };
 export const nextStatus = { pending: 'confirmed', confirmed: 'preparing', preparing: 'ready', ready: 'completed' };
 

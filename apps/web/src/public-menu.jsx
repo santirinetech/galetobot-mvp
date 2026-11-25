@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api, money, statuses } from './client.js';
-import { ArrowDown, Minus, Plus, ShoppingBag } from 'lucide-react';
-import { Badge, Brand, Empty, Loading, Notice, ProductPhoto } from './ui.jsx';
+import { ArrowDown, MessageCircle, Minus, Plus, ShoppingBag } from 'lucide-react';
+import { Badge, Brand, Dialog, Empty, Loading, Notice, ProductPhoto } from './ui.jsx';
+import { Chat } from './chat.jsx';
 
 const initial = { name: '', phone: '', fulfillment: 'pickup', payment: '', address: '', region: '' };
 
@@ -16,7 +17,15 @@ export function PublicMenu() {
     const [error, setError] = useState('');
     const [menuError, setMenuError] = useState('');
     const [busy, setBusy] = useState(false);
+    const [chatAvailable, setChatAvailable] = useState(false);
+    const [chatOpen, setChatOpen] = useState(false);
     const requesting = useRef(false);
+
+    useEffect(() => {
+        let active = true;
+        api('/chat/availability').then(data => { if (active) setChatAvailable(data.available === true); }).catch(() => {});
+        return () => { active = false; };
+    }, []);
 
     useEffect(() => {
         let stopped = false;
@@ -119,7 +128,16 @@ export function PublicMenu() {
                 {config?.hours && <p>{config.hours}</p>}
                 {config?.menu_note && <p>{config.menu_note}</p>}
                 {config && <Badge tone={config.menu_open ? 'success' : 'warning'}>{config.menu_open ? 'Aceitando pedidos' : 'Pedidos fechados'}</Badge>}
+                {chatAvailable && <div className="public-chat-entry">
+                    <button type="button" onClick={() => setChatOpen(true)} disabled={Boolean(pending) || busy}>
+                        <MessageCircle size={18} aria-hidden="true" /> Pedir com IA
+                    </button>
+                    <small>Os carrinhos do cardápio e da conversa são separados.</small>
+                </div>}
             </section>
+            {chatOpen && <Dialog title="Pedir com IA" onClose={() => setChatOpen(false)}>
+                <Chat onContinue={() => setChatOpen(false)} />
+            </Dialog>}
             {menuError && <Notice>{menuError}</Notice>}
             {!menu && !menuError && <Loading>Carregando cardápio…</Loading>}
             {error && <Notice>{error}</Notice>}

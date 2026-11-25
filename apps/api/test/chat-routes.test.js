@@ -105,3 +105,42 @@ test('lab authenticates admins and routes real checkout only to the configured d
     assert.equal(commercial.count('orders'), 0);
     assert.equal(commercial.count('chat_sessions'), 0);
 });
+
+test('public chat orders without Baileys, keeps cookies isolated and reports interpretation failure', { timeout: 15000 }, async t => {
+    const site = await instance(t, 'demo');
+    const prefix = '/chat';
+    assert.equal((await site.request(prefix + '/availability')).body.available, true);
+    assert.equal((await site.request(prefix + '/session')).status, 404);
+    assert.equal((await site.request(prefix + '/sessions', {}, undefined, 'https://wrong.example')).status, 403);
+    const first = await site.request(prefix + '/sessions', {});
+    const second = await site.request(prefix + '/sessions', {});
+    assert.equal(first.status, 201);
+    assert.notEqual(first.cookie, second.cookie);
+    const send = (mensagem, cookie = first.cookie, message_id = randomUUID()) => site.request(prefix + '/messages', { mensagem, message_id }, cookie);
+    const fail = await send('fixture sem interpretacao');
+    assert.equal(fail.status, 502);
+    assert.equal(fail.body.code, 'model_unavailable');
+    assert.equal((await site.request('/menu')).status, 200);
+    assert.equal((await site.request(prefix + '/messages', { message_id: randomUUID(), mensagem: 'oi', session_id: 'web:fake' }, first.cookie)).status, 400);
+    const added = await send('Quero galeto');
+    assert.equal(added.body.cart.items.length, 1);
+    assert.equal('diagnostic' in added.body.turns.at(-1), false);
+    assert.equal((await site.request(prefix + '/session', undefined, second.cookie)).body.turns.length, 0);
+    for (const text of ['retirada', 'nome Cliente Teste', 'telefone 11900000001', 'Cartão']) assert.equal((await send(text)).status, 200);
+    const id = randomUUID();
+    assert.equal((await send('Sim', first.cookie, id)).body.cart.order_id, 1);
+    assert.equal((await send('Sim', first.cookie, id)).body.cart.order_id, 1);
+    assert.equal(site.count('orders'), 1);
+    for (const text of ['Quero galeto', 'retirada', 'nome Cliente Teste', 'telefone 11900000002', 'Dinheiro, troco para 60']) {
+        assert.equal((await send(text, second.cookie)).status, 200);
+    }
+    assert.match((await site.request(prefix + '/session', undefined, second.cookie)).body.turns.at(-1).reply, /15,00/);
+    assert.equal((await send('1', second.cookie)).body.cart.order_id, 2);
+    assert.equal(site.count('order_payments'), 2);
+    assert.equal(site.count('stock_movements'), 2);
+    const handoff = await send('atendente', first.cookie);
+    assert.equal(handoff.body.cart.state, 'HUMAN');
+    assert.equal(handoff.body.contact, undefined);
+    for (let i = 0; i < 8; i++) assert.equal((await site.request(prefix + '/sessions', {})).status, 201);
+    assert.equal((await site.request(prefix + '/sessions', {})).status, 429);
+});
