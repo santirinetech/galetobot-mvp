@@ -145,6 +145,9 @@ app.post('/api/integrations/order', integrationAuth, orderHandler);
 app.post('/api/integrations/conversation', integrationAuth, conversationHandler(conversations, chat));
 app.post('/api/integrations/conversation/context', integrationAuth, contextHandler(conversations, chat));
 if (chatRouters) app.use('/api/integrations/ai-lab', chatRouters.internal);
+if (chatRouters) app.use('/api/admin/ai-lab', chatRouters.lab);
+else app.use('/api/admin/ai-lab', auth, (_req, res) =>
+    res.status(503).json({ error: 'O Laboratório IA ainda não está configurado.' }));
 if (mode === 'hosted') {
     const ready = db.prepare('SELECT 1 FROM sqlite_schema LIMIT 1');
     app.get('/healthz', (_req, res) => {

@@ -68,7 +68,7 @@ export function createChatService(db, conversations, { now = Date.now, timeout =
         const turn = guard(body);
         const prepared = conversations.prepareMessage(body);
         recordContext.run(Number(prepared.use_model), turn.seq);
-        if (prepared.suppress) finishTurn.run('done', null, now(), turn.seq);
+        if (prepared.suppress) finishTurn.run('done', null, null, turn.seq);
         return prepared;
     }).immediate;
 

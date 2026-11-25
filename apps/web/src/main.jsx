@@ -4,13 +4,14 @@ import { ArrowUpRight, Boxes, ClipboardList, FlaskConical, LayoutDashboard, LogO
 import { api, money } from './client.js';
 import { Customers, Dashboard, Orders, Products, Settings, Stock } from './admin-sections.jsx';
 import { PublicMenu } from './public-menu.jsx';
+import { Chat } from './chat.jsx';
 import { Brand, Dialog, Loading, Notice, ProductPhoto } from './ui.jsx';
 import './style.css';
 
 const tabs = [
     ['dashboard', 'Visão geral', LayoutDashboard], ['pedidos', 'Pedidos', ClipboardList], ['novo', 'Balcão', ShoppingBag],
     ['produtos', 'Produtos', Package], ['estoque', 'Estoque', Boxes], ['clientes', 'Clientes', Users],
-    ['settings', 'Configurações', SettingsIcon], ['ia', 'Ferramentas', FlaskConical]
+    ['settings', 'Configurações', SettingsIcon], ['ia', 'Laboratório IA', FlaskConical]
 ];
 const quickTabs = ['pedidos', 'novo', 'produtos', 'estoque'];
 
@@ -25,9 +26,6 @@ function App() {
     const [cart, setCart] = useState({});
     const [name, setName] = useState('');
     const [phone, setPhone] = useState('');
-    const [msg, setMsg] = useState('');
-    const [chat, setChat] = useState('');
-    const [suggested, setSuggested] = useState([]);
     const [error, setError] = useState('');
     const [busy, setBusy] = useState(false);
     const [storeName, setStoreName] = useState('');
@@ -108,12 +106,12 @@ function App() {
         }));
     }
 
-    function order(source = 'counter', items = null) {
+    function order() {
         action(async () => {
-            const selected = items || Object.entries(cart).filter(([, qty]) => qty > 0)
+            const selected = Object.entries(cart).filter(([, qty]) => qty > 0)
                 .map(([id, quantity]) => ({ product_id: Number(id), quantity }));
             if (!selected.length) throw new Error('Selecione produtos.');
-            const sale = { name, phone: phone.replace(/\D/g, ''), source, items: selected };
+            const sale = { name, phone: phone.replace(/\D/g, ''), source: 'counter', items: selected };
             const fingerprint = JSON.stringify(sale);
             if (pending.current?.fingerprint !== fingerprint) {
                 // Idempotency key is public-irrelevant and needs uniqueness, including on private HTTP LAN.
@@ -123,19 +121,9 @@ function App() {
             await api('/orders', { method: 'POST', body: { ...sale, external_key: pending.current.key } });
             pending.current = null;
             setCart({});
-            setSuggested([]);
-            setChat('Pedido registrado com sucesso.');
             setTab('pedidos');
             await refresh();
         }, 'Pedido registrado com sucesso.');
-    }
-
-    function simulate() {
-        action(async () => {
-            const data = await api('/simulate', { method: 'POST', body: { phone: phone.replace(/\D/g, ''), message: msg } });
-            setChat(data.reply);
-            setSuggested(data.suggested_items || []);
-        });
     }
 
     const customerFields = <>
@@ -181,9 +169,6 @@ function App() {
                 setCart({});
                 setName('');
                 setPhone('');
-                setChat('');
-                setMsg('');
-                setSuggested([]);
                 pending.current = null;
                 setTab('dashboard');
         });
@@ -242,21 +227,7 @@ function App() {
                     <button disabled={busy} onClick={() => order()}>Confirmar pedido de balcão</button>
                 </section>
             </>}
-            {tab === 'ia' && <section className="panel">
-                <h2>Simulador de atendimento</h2>
-                <p>O simulador usa o histórico local. Confirmar uma simulação consome estoque do banco selecionado.</p>
-                {customerFields}
-                <label>Mensagem<textarea value={msg} onChange={e => setMsg(e.target.value)} placeholder="Quero o de sempre" /></label>
-                <button disabled={busy} onClick={simulate}>Simular mensagem</button>
-                {chat && <p className="reply">{chat}</p>}
-                {suggested.map((item, index) => <div className="product" key={index}>
-                    {products.find(p => p.id === item.product_id)?.name || 'Produto'} × {item.quantity}
-                </div>)}
-                {suggested.length > 0 && <button disabled={busy || suggested.some(item => {
-                    const product = products.find(p => p.id === item.product_id);
-                    return !product?.active || product.stock < item.quantity;
-                })} onClick={() => order('whatsapp-simulated', suggested)}>Confirmar pedido simulado</button>}
-            </section>}
+            {tab === 'ia' && <Chat lab />}
         </main>
     </div>;
 }
