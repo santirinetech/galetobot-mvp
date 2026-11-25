@@ -72,7 +72,9 @@ if (checkout) {
     }
 }
 const chat = chatConfig.mode !== 'off' ? createChatService(db, conversations) : null;
-const chatRouters = chat && createChatRouters(chat, chatConfig, auth, csrf);
+const chatRouters = chat && createChatRouters(chat, chatConfig, auth, csrf, {
+    contact: () => checkout.settings().human_contact_url ?? chatConfig.contact
+});
 conversations.cleanupExpiredCarts();
 store?.cleanup();
 chat?.clean();

@@ -117,6 +117,7 @@ function isAuthorized(input, expected) {
 }
 
 export function createChatRouters(chat, config, auth, csrf, options) {
+    const contact = () => options?.contact ? options.contact() : config.contact;
     const gateway = createChatGateway(chat, config, options);
     const publicChat = Router(), lab = Router(), internal = Router();
     const cookieOptions = { httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV === 'production', maxAge: chatLifetime };
@@ -132,11 +133,11 @@ export function createChatRouters(chat, config, auth, csrf, options) {
         }));
         router.get('/session', asyncRoute(async (req, res) => {
             const result = await run('read', req.cookies[cookie], owner(req));
-            res.json(scope === 'web' && result.cart.state === 'HUMAN' ? { ...result, contact: config.contact } : result);
+            res.json(scope === 'web' && result.cart.state === 'HUMAN' ? { ...result, contact: contact() } : result);
         }));
         router.post('/messages', csrf, asyncRoute(async (req, res) => {
             const result = await run('send', req.cookies[cookie], owner(req), req.body);
-            res.json(scope === 'web' && result.cart.state === 'HUMAN' ? { ...result, contact: config.contact } : result);
+            res.json(scope === 'web' && result.cart.state === 'HUMAN' ? { ...result, contact: contact() } : result);
         }));
     }
     function local(scope) {

@@ -165,7 +165,7 @@ function App() {
                 setTab('dashboard');
         });
     }
-    const pilot = ['dashboard', 'pedidos', 'produtos', 'novo', 'estoque', 'clientes'].includes(tab);
+    const pilot = ['dashboard', 'pedidos', 'produtos', 'novo', 'estoque', 'clientes', 'settings'].includes(tab);
     return <AdminShell {...{ tab, navigate, logout, storeName, busy, pilot }}>
             {syncError && (pilot
                 ? <Feedback kind="error" title="Falha ao carregar a operação" onRetry={refresh}>{syncError}</Feedback>

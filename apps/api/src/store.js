@@ -11,12 +11,16 @@ const regions = z.array(z.object({ name: text(80).min(1), shipping_cents: cents 
 const settingsSchema = z.object({
     name: text(100).min(1), hours: text(300), menu_note: text(300),
     menu_open: z.boolean(), regions,
+    pickup_enabled: z.boolean().optional(),
+    brand_theme: z.enum(['brasa', 'carvao']).optional(),
+    human_contact_url: z.union([z.literal(''), z.url({ protocol: /^https$/ }).max(500)
+        .refine(value => { const url = URL.parse(value); return url && !url.username && !url.password; })]).optional(),
     payments: z.array(text(50).min(1)).min(1).max(12),
     pix_key: text(150).regex(/^[^\p{Cc}]*$/u).optional(),
     region_aliases: z.array(z.object({ alias: text(80).min(1), regiao: text(80).min(1) })).max(100).optional()
 }).refine(data => (data.region_aliases ?? []).every(row => data.regions.some(region => region.name === row.regiao)), {
     message: 'Apelidos devem apontar para regiões cadastradas.'
-});
+}).refine(data => !data.menu_open || data.pickup_enabled !== false || data.regions.length > 0);
 const defaultSettings = { name: 'GaletoBot', hours: '', menu_note: '', menu_open: true, regions: [], payments: ['Dinheiro', 'Pix', 'Cartão'] };
 export const productFields = z.object({
     name: text(80).min(1), price_cents: cents, description: text(500), category: text(80),
@@ -49,6 +53,9 @@ export function createStoreCheckout(db, orders) {
     function summarize(data, { counter = false } = {}) {
         const config = settings();
         if (!counter && !config.menu_open) throw new OrderUnavailableError('Pedidos pelo cardápio estão fechados.');
+        if (!counter && data.fulfillment === 'pickup' && config.pickup_enabled === false) {
+            throw new OrderUnavailableError('A retirada está indisponível neste momento.');
+        }
         const payment = config.payments.find(value => value.toLocaleLowerCase('pt-BR') === data.payment?.toLocaleLowerCase('pt-BR'));
         if (!payment) throw new OrderUnavailableError('Forma de pagamento indisponível.');
         const region = config.regions.find(row => row.name.toLocaleLowerCase('pt-BR') === data.region?.toLocaleLowerCase('pt-BR'));
@@ -98,6 +105,7 @@ function withBody(schema, action) {
 export function createStoreRouter(db, orders, checkout, auth, csrf, media) {
     const router = Router();
     const { settings, summarize } = checkout;
+    const writeSettings = db.prepare('INSERT INTO store_settings VALUES (1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value');
     const orderById = db.prepare('SELECT o.*, c.name customer_name, c.phone FROM orders o LEFT JOIN customers c ON c.id=o.customer_id WHERE o.id=?');
     const paymentByOrder = db.prepare('SELECT * FROM order_payments WHERE order_id=?');
     const markReceived = db.prepare(`UPDATE order_payments SET status='received',
@@ -175,6 +183,8 @@ export function createStoreRouter(db, orders, checkout, auth, csrf, media) {
         const writePhoto = db.prepare('UPDATE products SET image_url=? WHERE id=?');
         media.routes(router, '/products/:id/photo', auth, csrf,
             req => readPhoto.get(req.params.id), (req, url) => writePhoto.run(url, req.params.id));
+        media.routes(router, '/settings/logo', auth, csrf, () => settings().logo_url ?? '',
+            (_req, url) => writeSettings.run(JSON.stringify({ ...settings(), logo_url: url })));
     }
     router.patch('/products/:id', auth, csrf, withBody(productFields.partial().refine(p => Object.keys(p).length > 0), (fields, req, res) => {
         const previous = fields.image_url !== undefined && db.prepare('SELECT image_url FROM products WHERE id=?').pluck().get(req.params.id);
@@ -271,8 +281,15 @@ export function createStoreRouter(db, orders, checkout, auth, csrf, media) {
     `).all(req.params.id)));
     router.get('/settings', auth, (_req, res) => res.json(settings()));
     router.put('/settings', auth, csrf, withBody(settingsSchema, (data, _req, res) => {
-        db.prepare('INSERT INTO store_settings VALUES (1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value').run(JSON.stringify(data));
-        return res.json(data);
+        const current = settings();
+        const preserved = Object.fromEntries(['logo_url','brand_theme','pickup_enabled','human_contact_url']
+            .filter(key => current[key] !== undefined).map(key => [key, current[key]]));
+        const updated = { ...preserved, ...data };
+        if (updated.menu_open && updated.pickup_enabled === false && !updated.regions.length) {
+            return res.status(400).json({ error: 'Habilite a retirada ou cadastre uma região de entrega.' });
+        }
+        writeSettings.run(JSON.stringify(updated));
+        return res.json(updated);
     }));
     return { router, cleanup: () => removeExpired.run(Date.now()) };
 }

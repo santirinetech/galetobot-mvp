@@ -152,7 +152,10 @@ export function createConversationService(db, { quoteOrder, createOrder }, { now
 
     function checkoutInstructions(cart) {
         if (!checkout) return '';
-        const { regions, payments } = checkout.settings();
+        const { regions, payments, pickup_enabled: pickup } = checkout.settings();
+        if (pickup === false && (!cart.fulfillment || cart.fulfillment === 'pickup')) {
+            return regions.length ? 'A retirada está indisponível. Informe o bairro para entrega.' : 'Entrega e retirada estão indisponíveis.';
+        }
         if (!cart.fulfillment) {
             return regions.length ? 'Você prefere entrega ou retirada?' : 'A entrega está indisponível no momento. Você prefere retirar na loja?';
         }
@@ -254,6 +257,7 @@ export function createConversationService(db, { quoteOrder, createOrder }, { now
             const value = fulfillment?.[2].trim() ?? '';
             const field = fulfillment && normalize(fulfillment[1]);
             if (command === 'retirada') {
+                if (checkout.settings().pickup_enabled === false) return 'A retirada está indisponível neste momento.';
                 Object.assign(cart, { fulfillment: 'pickup', region: '', address: '' });
             } else if (command === 'entrega' || field === 'entrega') {
                 const settings = checkout.settings();
