@@ -1,0 +1,50 @@
+server {
+    listen 8080;
+    server_name _;
+    root /usr/share/nginx/html;
+    server_tokens off;
+    access_log off;
+    client_max_body_size 100k;
+
+    location ~* ^/api/integrations(?:/|$) {
+        return 404;
+    }
+
+    location /api/ {
+        proxy_pass http://api:3000/api/;
+    }
+
+    location = /healthz {
+        proxy_pass http://api:3000/healthz;
+    }
+
+    location /assets/ {
+        try_files $uri =404;
+    }
+
+    location / {
+        try_files $uri /index.html;
+    }
+}
+
+server {
+    listen 8081;
+    server_name _;
+    server_tokens off;
+    access_log off;
+    client_max_body_size 100k;
+    allow ${N8N_SOURCE_IP};
+    deny all;
+
+    location = /api/integrations/conversation/context {
+        proxy_pass http://api:3000/api/integrations/conversation/context;
+    }
+
+    location = /api/integrations/conversation {
+        proxy_pass http://api:3000/api/integrations/conversation;
+    }
+
+    location / {
+        return 404;
+    }
+}

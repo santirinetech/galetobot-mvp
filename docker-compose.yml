@@ -1,0 +1,80 @@
+name: galetobot
+
+x-logs: &logs
+  driver: json-file
+  options:
+    max-size: 5m
+    max-file: "3"
+
+services:
+  api:
+    image: galetobot-api:${RELEASE:-candidate}
+    build:
+      context: .
+      target: api
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      APP_ORIGIN: ${APP_ORIGIN:?Configure APP_ORIGIN}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Configure ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Configure ADMIN_PASSWORD}
+      WEBHOOK_TOKEN: ${WEBHOOK_TOKEN:?Configure WEBHOOK_TOKEN}
+      DATABASE_PATH: /data/${DATABASE_FILENAME:-galetobot.db}
+    volumes:
+      - type: bind
+        source: ${DATABASE_DIR:-./runtime/db}
+        target: /data
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.status===204?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging: *logs
+
+  web:
+    image: galetobot-web:${RELEASE:-candidate}
+    build:
+      context: .
+      target: web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+        restart: true
+    environment:
+      N8N_SOURCE_IP: ${N8N_SOURCE_IP:?Configure N8N_SOURCE_IP}
+      NGINX_ENVSUBST_FILTER: ^N8N_SOURCE_IP$
+    ports:
+      - "127.0.0.1:${PUBLIC_LOOPBACK_PORT:-8080}:8080"
+      - "${LAN_BIND_IP:?Configure LAN_BIND_IP}:${INTEGRATION_PORT:-3001}:8081"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+    logging: *logs
+
+  whatsapp:
+    profiles: [whatsapp]
+    image: galetobot-api:${RELEASE:-candidate}
+    restart: "no"
+    init: true
+    working_dir: /app/apps/api
+    environment:
+      N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-}
+      N8N_WEBHOOK_TOKEN: ${N8N_WEBHOOK_TOKEN:-}
+      WHATSAPP_ALLOW_QR: "0"
+    command: ["sh", "-ec", "umask 077; test -s whatsapp-session/creds.json || { echo 'Sessão autorizada ausente'; exit 1; }; exec node src/whatsapp/connect.js"]
+    volumes:
+      - type: bind
+        source: ${WHATSAPP_SESSION_DIR:-./runtime/whatsapp-session}
+        target: /app/apps/api/whatsapp-session
+        bind:
+          create_host_path: false
+    logging: *logs
