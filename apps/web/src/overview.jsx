@@ -44,7 +44,7 @@ export function Dashboard({ data, orders, navigate }) {
                         </li>)}</ul>}
                 </Surface>
                 <div className="overview-stack">
-                    <Surface title="Estoque em atenção" actions={<Button icon={Boxes} variant="quiet" onClick={() => navigate('estoque')}>Ver estoque</Button>}>
+                    <Surface title={`Estoque em atenção · ${data.low_stock.length}`} actions={<Button icon={Boxes} variant="quiet" onClick={() => navigate('estoque')}>Ver estoque</Button>}>
                         {!data.low_stock.length ? <Feedback title="Estoque sem alertas">Nenhum produto ativo com duas unidades ou menos.</Feedback> :
                             <ul className="overview-stock-list">{data.low_stock.slice(0, 5).map(product => <li key={product.id}>
                                 <strong>{product.name}</strong>

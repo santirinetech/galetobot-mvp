@@ -13,7 +13,7 @@
 }
 .ops-nav-button[aria-current=page], .ops-nav-button[data-current=true] { background: var(--ds-mark); color: var(--ds-mark-text); }
 .ops-shell .ops-mobile-nav { background: var(--ds-paper); border-color: var(--ds-border); }
-.ops-mobile-nav .ops-nav-button { text-align: center; }
+.ops-shell .ops-mobile-nav button { color: var(--ds-muted); text-align: center; }
 .ops-mobile-nav .ops-nav-button[aria-current=page], .ops-mobile-nav .ops-nav-button[data-current=true] { color: var(--ds-mark-text); }
 @media (max-width: 420px) {
     .ops-menu-link span { display: none; }

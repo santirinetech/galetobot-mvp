@@ -63,6 +63,10 @@
 }
 @media (max-width: 540px) {
     .ops-order-controls, .ops-order-filter { padding-inline: 10px; }
+    .ops-order-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+    .ops-order-controls .ds-field:first-child { grid-column: 1 / -1; }
+    .ops-order-controls select { width: 100%; padding-inline: 6px; font-size: .82rem; }
+    .ops-layout .ds-button { font-size: .78rem; padding-inline: 7px; gap: 4px; }
     .ops-order-filter .ds-choices button { font-size: .75rem; }
     .ops-drawer-facts { padding: 10px; }
 }

@@ -433,6 +433,10 @@ test('API HTTP isolada cobre regressões, erros seguros e reenvio após perda da
         assert.equal((await storeRequest('/orders', { admin: true }))[0].id, 6);
         assert.equal(db.prepare('SELECT COUNT(*) FROM stock_movements WHERE order_id=6').pluck().get(), 3);
         assert.equal(db.prepare('SELECT stock FROM products WHERE id=?').pluck().get(farofa.id), 7);
+        db.prepare("UPDATE orders SET created_at=datetime('now','-3 days') WHERE id=6").run();
+        const laterReceipt = await storeRequest('/dashboard', { admin: true });
+        assert.equal(laterReceipt.total_cents, receivedSummary.total_cents - 7200);
+        assert.equal(laterReceipt.received_today_cents, 7200);
     } finally {
         db.close();
     }

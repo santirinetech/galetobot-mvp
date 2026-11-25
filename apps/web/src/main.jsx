@@ -172,11 +172,12 @@ function App() {
     const pilot = tab === 'dashboard' || tab === 'pedidos';
     return <AdminShell {...{ tab, navigate, logout, storeName, busy, pilot }}>
             {syncError && (pilot
-                ? <Feedback kind="error" title="Falha ao carregar a opera??o" onRetry={refresh}>{syncError}</Feedback>
+                ? <Feedback kind="error" title="Falha ao carregar a operação" onRetry={refresh}>{syncError}</Feedback>
                 : <Notice onRetry={refresh}>{syncError}</Notice>)}
             {error && <Notice>{error}</Notice>}
             {success && <Notice kind="success">{success}</Notice>}
-            {!dashboard && !syncError && <Loading>Carregando operação…</Loading>}
+            {!dashboard && !syncError && (pilot ? <Feedback kind="loading" title="Carregando operação…" /> :
+                <Loading>Carregando operação…</Loading>)}
             {tab === 'dashboard' && <Dashboard data={dashboard} orders={orders} navigate={navigate} />}
             {tab === 'pedidos' && <Orders {...{ orders, refresh, action, busy, error }} ready={Boolean(dashboard)} />}
             {tab === 'produtos' && dashboard && <Products {...{ products, refresh, action, busy, error }} />}

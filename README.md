@@ -42,6 +42,8 @@ O chat público e o Laboratório IA são opcionais e não dependem do Baileys. C
 
 O perfil WhatsApp oferece vinculação, diagnóstico e controle da automação em **Configurações → Conexão WhatsApp**. Consulte o [guia da Central WhatsApp](docs/whatsapp-central.md) para preparar a instalação e proteger a sessão.
 
+O [guia do design system Brasa](docs/design-system-brasa.md) descreve o piloto de Visão Geral e Pedidos, os indicadores financeiros e a estratégia de reuso nas demais telas.
+
 | Caminho | Conteúdo |
 | --- | --- |
 | `apps/api/` | Node.js, Express, SQLite, Baileys, regras comerciais e testes |

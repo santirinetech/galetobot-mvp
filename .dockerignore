@@ -26,7 +26,9 @@
 !apps/web/src/*.css
 !apps/web/src/fonts/
 !apps/web/src/fonts/*.woff2
-!apps/web/src/fonts/*-OFL.txt
+!apps/web/public/
+!apps/web/public/font-licenses/
+!apps/web/public/font-licenses/*-OFL.txt
 !deploy/
 !deploy/nginx.conf.template
 !scripts/
