@@ -65,11 +65,14 @@ services:
     image: galetobot-api:${RELEASE:-candidate}
     restart: "no"
     init: true
+    stop_grace_period: 45s
     working_dir: /app/apps/api
     environment:
       N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-}
       N8N_WEBHOOK_TOKEN: ${N8N_WEBHOOK_TOKEN:-}
       WHATSAPP_ALLOW_QR: "0"
+      WHATSAPP_DIAGNOSTICS: ${WHATSAPP_DIAGNOSTICS:-basic}
+      WHATSAPP_PROTOCOL_MODE: ${WHATSAPP_PROTOCOL_MODE:-bundled}
     command: ["sh", "-ec", "umask 077; test -s whatsapp-session/creds.json || { echo 'Sessão autorizada ausente'; exit 1; }; exec node src/whatsapp/connect.js"]
     volumes:
       - type: bind

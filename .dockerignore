@@ -9,6 +9,9 @@
 !apps/api/src/knowledge.json
 !apps/api/src/whatsapp/
 !apps/api/src/whatsapp/connect.js
+!apps/api/src/whatsapp/diagnostics.js
+!apps/api/src/whatsapp/messages.js
+!apps/api/src/whatsapp/supervisor.js
 !apps/web/
 !apps/web/package.json
 !apps/web/index.html
