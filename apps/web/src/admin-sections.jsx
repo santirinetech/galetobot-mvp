@@ -2,6 +2,7 @@
 import { ArrowDownLeft, ArrowRight, ArrowUpRight, Boxes, ClipboardList, Clock3, Package, Pencil, Plus, RefreshCw, Search, ShoppingBag, Wallet } from 'lucide-react';
 import { api, money, nextStatus, sources, statuses } from './client.js';
 import { Badge, Dialog, Empty, formatDate, Loading, Notice, OrderStatus, ProductPhoto } from './ui.jsx';
+import { WhatsAppSettings } from './whatsapp-settings.jsx';
 
 const emptyProduct = { name: '', price: '', stock: '0', description: '', category: '', image_url: '', active: true };
 const parseMoney = value => value.trim() ? Math.round(Number(value.trim().replace(',', '.')) * 100) : NaN;
@@ -339,6 +340,7 @@ export function Settings({ action, busy, refresh }) {
         </div>
         <button disabled={busy}>Salvar configurações</button>
     </form>
+    <WhatsAppSettings />
     <section className="panel" style={{ marginTop: 16 }}>
         <PanelHeading title="Atendimento humano"><button type="button" className="secondary small" onClick={handoffs.load}>Atualizar</button></PanelHeading>
         <ResourceError resource={handoffs} />

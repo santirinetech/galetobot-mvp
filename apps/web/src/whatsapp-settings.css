@@ -1,0 +1,28 @@
+.wa-settings { --wa-charcoal: #18181b; --wa-cream: #faf7f2; --wa-orange: #a13e0b; margin-top: 16px; color: var(--wa-charcoal); }
+.wa-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.wa-heading h2 { display: flex; gap: 8px; align-items: center; margin: 0; }
+.wa-heading p { margin: 7px 0; color: #514b44; }
+.wa-heading .badge { white-space: nowrap; }
+.wa-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 1px; background: #e5ddd2; border: 1px solid #e5ddd2; margin: 16px 0; }
+.wa-facts div { min-width: 0; background: var(--wa-cream); padding: 10px 12px; }
+.wa-facts dt { font-size: .82rem; color: #514b44; }
+.wa-facts dd { font-weight: 650; margin: 4px 0 0; overflow-wrap: anywhere; }
+.wa-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+button.wa-primary { background: var(--wa-orange, #a13e0b); color: white; }
+button.wa-primary:hover:not(:disabled) { background: #873208; }
+.wa-qr { margin: 16px 0; background: var(--wa-cream); padding: 12px; text-align: center; }
+.wa-qr img { display: block; width: min(230px, 100%); margin: 0 auto 8px; }
+.wa-advanced { margin-top: 14px; border-top: 1px solid #e5ddd2; padding-top: 12px; }
+.wa-advanced summary { cursor: pointer; font-weight: 650; }
+.wa-advanced summary svg { vertical-align: middle; margin: 0 4px; }
+.wa-probe form { display: flex; align-items: end; gap: 8px; flex-wrap: wrap; }
+.wa-probe form label { flex: 1; min-width: min(225px, 100%); }
+.wa-probe-result { background: var(--wa-cream); padding: 10px; margin-top: 10px; overflow-wrap: anywhere; }
+.wa-probe-result li { margin: 5px 0; }
+.wa-events { padding: 0; list-style: none; max-height: 270px; overflow: auto; }
+.wa-events li { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; border-bottom: 1px solid #e5ddd2; padding: 8px 0; }
+@media (max-width: 540px) {
+    .wa-heading { flex-wrap: wrap; }
+    .wa-actions > button { flex: 1 1 130px; }
+    .wa-probe form button { width: 100%; }
+}
