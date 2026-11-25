@@ -24,6 +24,9 @@
 !apps/web/src/*.js
 !apps/web/src/*.jsx
 !apps/web/src/*.css
+!apps/web/src/fonts/
+!apps/web/src/fonts/*.woff2
+!apps/web/src/fonts/*-OFL.txt
 !deploy/
 !deploy/nginx.conf.template
 !scripts/
