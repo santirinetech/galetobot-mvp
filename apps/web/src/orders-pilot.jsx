@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowRight, ClipboardList, Columns3, List, RefreshCw } from 'lucide-react';
 import { api, nextStatus, sources, statuses } from './client.js';
 import { formatDate } from './ui.jsx';
@@ -8,10 +8,10 @@ import './orders-pilot.css';
 
 const layouts = [{ id: 'list', label: 'Lista', icon: List }, { id: 'board', label: 'Kanban', icon: Columns3 }];
 const statusOptions = [{ id: 'all', label: 'Todos' }, ...Object.entries(statuses).map(([id, label]) => ({ id, label }))];
-const columns = ['Pedido / Cliente', 'Canal', 'Horário', 'Status do pedido', 'Pagamento', 'Total', 'Ações'];
+const columns = ['Pedido / Cliente', 'Canal / Entrega', 'Horário', 'Status do pedido', 'Pagamento', 'Total', 'Ações'];
 const advanceLabels = { confirmed: 'Confirmar', preparing: 'Iniciar preparo', ready: 'Marcar pronto', completed: 'Concluir' };
 const source = order => sources[order.source] || 'Origem desconhecida';
-const searchable = value => String(value ?? '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+const fulfillment = order => ({ pickup: 'Retirada', delivery: 'Entrega' })[order.fulfillment];
 const initials = name => (name || 'Cliente').trim().split(/\s+/).slice(0, 2).map(word => word[0]).join('').toUpperCase();
 const time = order => formatDate(order.created_at, { timeStyle: 'short' });
 
@@ -24,7 +24,7 @@ function OrderCard({ order, choose, advance, busy, board }) {
     return <article className={'ops-order-card tone-' + (orderTones[order.status] ?? 'neutral')}>
         <div className="ops-order-card-meta"><strong>#{order.id}</strong><time>{time(order)}</time></div>
         <div className="ops-order-card-name">
-            <strong>{order.customer_name || 'Cliente'}</strong><small>{source(order)}</small>
+            <strong>{order.customer_name || 'Cliente'}</strong><small>{[source(order), fulfillment(order)].filter(Boolean).join(' / ')}</small>
         </div>
         <div className="ops-order-card-tags">
             {!board && <OrderTag status={order.status} />}<PaymentTag status={order.payment_status} />
@@ -46,7 +46,7 @@ function OrderRows({ orders, choose }) {
                     <span className="ops-order-initials" aria-hidden="true">{initials(order.customer_name)}</span>
                     <span><strong>{order.customer_name || 'Cliente'}</strong><small>#{order.id}</small></span>
                 </div></td>
-                <td>{source(order)}</td>
+                <td>{source(order)}{fulfillment(order) && <small className="ops-payment-method">{fulfillment(order)}</small>}</td>
                 <td className="ops-order-time">{time(order)}<small>{formatDate(order.created_at, { dateStyle: 'short' })}</small></td>
                 <td><OrderTag status={order.status} /></td>
                 <td><PaymentTag status={order.payment_status} />
@@ -59,19 +59,16 @@ function OrderRows({ orders, choose }) {
     </>;
 }
 
-function Board({ orders, filter, choose, advance, busy }) {
-    const lanes = Object.entries(statuses).filter(([status]) => filter === 'all' || status === filter);
+function Board({ lanes, choose, advance, busy, more }) {
     return <section className="ops-board" aria-label="Kanban de pedidos" tabIndex={0}>
-        {lanes.map(([status, label]) => {
-            const items = orders.filter(order => order.status === status);
-            return <section key={status} className={'ops-lane tone-' + orderTones[status]} aria-label={label}>
-                <header><h2>{label}</h2><span>{items.length}</span></header>
-                <div className="ops-lane-body">
-                    {items.length ? items.map(order => <OrderCard key={order.id} {...{ order, choose, advance, busy }} board />)
-                        : <p>Sem pedidos neste status.</p>}
-                </div>
-            </section>;
-        })}
+        {lanes.map(lane => <section key={lane.status} className={'ops-lane tone-' + orderTones[lane.status]} aria-label={statuses[lane.status]}>
+            <header><h2>{statuses[lane.status]}</h2><span>{lane.total}</span></header>
+            <div className="ops-lane-body">
+                {lane.items.length ? lane.items.map(order => <OrderCard key={order.id} {...{ order, choose, advance, busy }} board />)
+                    : <p>Sem pedidos neste status.</p>}
+                {lane.next && <Button disabled={busy} onClick={() => more(lane)}>Mostrar mais ({lane.items.length}/{lane.total})</Button>}
+            </div>
+        </section>)}
     </section>;
 }
 
@@ -110,7 +107,7 @@ function OrderDetails({ details, busy, error, onPayment, onStatus }) {
     </>;
 }
 
-export function Orders({ orders, refresh, action, busy, error, ready }) {
+export function Orders({ refresh, action, busy, error, ready }) {
     const [layout, setLayout] = useState('list');
     const [filter, setFilter] = useState('all');
     const [search, setSearch] = useState('');
@@ -119,10 +116,34 @@ export function Orders({ orders, refresh, action, busy, error, ready }) {
     const [details, setDetails] = useState(null);
     const [loadError, setLoadError] = useState('');
     const [reload, setReload] = useState(0);
-    const visible = orders.filter(order => (filter === 'all' || order.status === filter) &&
-        (channel === 'all' || order.source === channel) &&
-        searchable(`#${order.id} ${order.customer_name ?? ''}`).includes(searchable(search.trim())));
+    const [page, setPage] = useState(null);
+    const [listError, setListError] = useState('');
+    const [pageVersion, setPageVersion] = useState(0);
+    const params = new URLSearchParams({ view: layout, status: filter, channel, q: search });
+    const path = '/orders?' + params.toString();
+    useEffect(() => {
+        const controller = new AbortController();
+        setPage(null);
+        setListError('');
+        const timer = setTimeout(() => {
+            api(path, { signal: controller.signal }).then(value => { if (!controller.signal.aborted) setPage(value); })
+                .catch(err => { if (!controller.signal.aborted) setListError(err.message); });
+        }, 180);
+        return () => { clearTimeout(timer); controller.abort(); };
+    }, [path, pageVersion]);
 
+    function more(lane = page) {
+        action(async () => {
+            const next = new URLSearchParams({ view: 'list', status: lane.status ?? filter, channel, q: search, before: lane.next });
+            const result = await api('/orders?' + next);
+            setPage(current => {
+                if (current !== page) return current;
+                const updated = { ...lane, ...result, items: [...lane.items, ...result.items] };
+                return page.lanes ? { lanes: page.lanes.map(row => row === lane ? updated : row) } : updated;
+            });
+        });
+    }
+    const total = page?.total ?? page?.lanes?.reduce((sum, lane) => sum + lane.total, 0);
     function open(id) { setDetails(null); setLoadError(''); choose(id); }
     useEffect(() => {
         if (selected === null) return;
@@ -138,6 +159,7 @@ export function Orders({ orders, refresh, action, busy, error, ready }) {
         action(async () => {
             await api(`/orders/${order.id}/status`, { method: 'PATCH', body: { status } });
             if (drawer) setReload(reload => reload + 1);
+            setPageVersion(value => value + 1);
             await refresh();
         }, 'Status atualizado.');
     }
@@ -146,32 +168,39 @@ export function Orders({ orders, refresh, action, busy, error, ready }) {
         action(async () => {
             await api(`/orders/${selected}/payment`, { method: 'PATCH', body: { status: 'received' } });
             setReload(reload => reload + 1);
+            setPageVersion(value => value + 1);
             await refresh();
         }, 'Recebimento do Pix registrado.');
     }
 
     return <div className="ops-orders">
         <PageHeading title="Pedidos" description="Acompanhe o preparo e confira o pagamento de cada pedido."
-            actions={<Button icon={RefreshCw} onClick={() => action(refresh)} disabled={busy}>Atualizar</Button>} />
+            actions={<Button icon={RefreshCw} onClick={() => { setPageVersion(value => value + 1); action(refresh); }} disabled={busy}>Atualizar</Button>} />
         {ready && <>
             <Surface className="ops-order-tools">
-                <div className="ops-order-controls">
+                <details className="ops-order-extra"><summary>Buscar e filtrar</summary><div className="ops-order-controls">
                     <Field label="Buscar pedido" type="search" placeholder="Número ou cliente" value={search} onChange={e => setSearch(e.target.value)} />
                     <Field as="select" label="Canal" value={channel} onChange={e => setChannel(e.target.value)}>
                         <option value="all">Todos os canais</option>
                         {Object.entries(sources).map(([key, name]) => <option key={key} value={key}>{name}</option>)}
                     </Field>
-                    <div className="ops-layout"><ChoiceGroup label="Visualização" options={layouts} value={layout} onChange={setLayout} /></div>
-                </div>
+                </div></details>
                 <div className="ops-order-filter">
                     <ChoiceGroup label="Filtrar por status" options={statusOptions} value={filter} onChange={setFilter} />
-                    <span aria-live="polite">{visible.length} {visible.length === 1 ? 'pedido' : 'pedidos'}</span>
+                    <ChoiceGroup label="Layout" options={layouts} value={layout} onChange={setLayout} />
+                    <span aria-live="polite">{total ?? 0} {total === 1 ? 'pedido' : 'pedidos'}</span>
                 </div>
             </Surface>
-            {!visible.length ? <Surface><Feedback title={orders.length ? 'Nenhum pedido neste filtro' : 'Nenhum pedido registrado'}>
-                {orders.length ? 'Ajuste os filtros para consultar outros pedidos.' : 'Os pedidos recebidos pelos canais de venda aparecem aqui.'}
-            </Feedback></Surface> : layout === 'list' ? <Surface><OrderRows orders={visible} choose={open} /></Surface>
-                : <Board orders={visible} filter={filter} choose={open} advance={advance} busy={busy} />}
+            {listError ? <Feedback kind="error" title="Falha na consulta" onRetry={() => setPageVersion(value => value + 1)}>{listError}</Feedback>
+                : !page ? <Feedback kind="loading" title="Consultando pedidos..." />
+                : !total ? <Surface><Feedback title="Nenhum pedido encontrado">Ajuste os filtros para consultar outros pedidos.</Feedback></Surface>
+                : page.lanes ? <Board lanes={page.lanes} choose={open} advance={advance} busy={busy} more={more} />
+                : <Surface><OrderRows orders={page.items} choose={open} />
+                    {page.next && <div className="ops-order-controls"><Button disabled={busy} onClick={() => more()}>
+                        Mostrar mais ({page.items.length}/{page.total})
+                    </Button></div>}
+                </Surface>}
+
         </>}
         {selected !== null && <Overlay title={`Pedido #${selected}`} drawer onClose={() => choose(null)}>
             {loadError ? <Feedback kind="error" title="Não foi possível abrir o pedido"

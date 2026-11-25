@@ -437,6 +437,17 @@ test('API HTTP isolada cobre regressões, erros seguros e reenvio após perda da
         const laterReceipt = await storeRequest('/dashboard', { admin: true });
         assert.equal(laterReceipt.total_cents, receivedSummary.total_cents - 7200);
         assert.equal(laterReceipt.received_today_cents, 7200);
+        db.exec(`WITH RECURSIVE sample(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM sample WHERE i<115)
+            INSERT INTO orders(source,status,total_cents) SELECT 'site','pending',1000 FROM sample`);
+        const lane = (await storeRequest('/orders?view=board&status=pending&channel=site', { admin: true })).lanes[0];
+        assert.equal(lane.total, 115);
+        assert.equal(lane.items.length, 20);
+        const nextPage = await storeRequest(`/orders?view=list&status=pending&channel=site&before=${lane.next}`, { admin: true });
+        assert.equal(nextPage.items.length, 25);
+        assert.ok(nextPage.items.every(row => row.id < lane.next));
+        const byNumber = await storeRequest('/orders?view=list&q=%236', { admin: true });
+        assert.equal(byNumber.items[0].fulfillment, 'delivery');
+        await storeRequest('/orders?view=board&before=2', { admin: true, status: 400 });
     } finally {
         db.close();
     }

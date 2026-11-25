@@ -22,7 +22,7 @@ export function Dashboard({ data, orders, navigate }) {
     const received = data?.received_today_cents;
     return <div className="ops-overview">
         <PageHeading title="Visão geral" context={date()} description="Pedidos, recebimentos registrados e alertas da operação."
-            actions={<Button icon={Plus} variant="primary" onClick={() => navigate('novo')}>Pedido de balcão</Button>} />
+            actions={<Button className="overview-mobile-order" icon={Plus} variant="primary" onClick={() => navigate('novo')}>Pedido de balcão</Button>} />
         {data && <>
             <section className="overview-metrics" aria-label="Indicadores do dia">
                 <Metric title="Pedidos do dia" value={data.today} note="Todos os canais comerciais" icon={ClipboardList} tone="brasa" />

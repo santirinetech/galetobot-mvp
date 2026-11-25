@@ -5,6 +5,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import { initializeDatabase, selectRuntimeDatabase } from './database.js';
 import { createOrderService, orderSchema, OrderUnavailableError } from './orders.js';
+import { createOrderPage } from './order-page.js';
 import { createConversationService, CART_CLEANUP_INTERVAL_MS } from './conversations.js';
 import { createChatService } from './chat-service.js';
 import { createChatRouters, readChatConfig } from './chat-http.js';
@@ -107,7 +108,8 @@ const orderList = db.prepare(`SELECT o.*,c.name customer_name,c.phone
     FROM orders o LEFT JOIN customers c ON c.id=o.customer_id
     ${enableStore ? 'LEFT JOIN order_payments p ON p.order_id=o.id' : ''}
     ORDER BY o.id DESC LIMIT 100`);
-app.get('/api/orders', auth, (_req, res) => res.json(orderList.all()));
+const orderPage = enableStore ? createOrderPage(db) : null;
+app.get('/api/orders', auth, (req, res) => orderPage && Object.keys(req.query).length ? orderPage(req, res) : res.json(orderList.all()));
 const productSchema = productFields.extend({ stock: z.number().int().min(0) }).partial({
     description: true, category: true, image_url: true, active: true
 });

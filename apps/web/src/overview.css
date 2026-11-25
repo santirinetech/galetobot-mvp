@@ -1,4 +1,6 @@
 .ops-overview { container-type: inline-size; }
+.ops-overview .ds-page-heading h1 { font-size: clamp(1.9rem, 3.2vw, 2.65rem); }
+@media (min-width: 820px) { .ops-overview .overview-mobile-order { display: none; } }
 .overview-metrics { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin-bottom: 20px; }
 .overview-metric { min-width: 0; border: 1px solid var(--ds-border); border-radius: var(--ds-surface-radius); background: var(--ds-paper); padding: 15px; box-shadow: var(--ds-shadow); }
 .overview-metric-title { display: flex; align-items: center; gap: 9px; min-height: 36px; }
