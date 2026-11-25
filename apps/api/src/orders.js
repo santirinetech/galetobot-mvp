@@ -57,12 +57,12 @@ export function createOrderService(db, { enableStore = false } = {}) {
 
         const { total_cents: subtotal, lines } = quoteOrder(order.items);
         const total_cents = subtotal + (enableStore ? (details?.shipping_cents ?? 0) : 0);
-        const customerStatement = ['whatsapp', 'site'].includes(order.source) ? registerCustomer : saveCustomer;
+        const customerStatement = ['whatsapp', 'site', 'web-chat'].includes(order.source) ? registerCustomer : saveCustomer;
         customerStatement.run(order.phone, order.name);
         const customer = findCustomer.get(order.phone);
         const { lastInsertRowid: id } = saveOrder.run(customer.id, order.source, total_cents, order.external_key || null);
         if (enableStore) {
-            const status = ['whatsapp', 'site'].includes(order.source) ? 'pending' : 'confirmed';
+            const status = ['whatsapp', 'site', 'web-chat'].includes(order.source) ? 'pending' : 'confirmed';
             storeOrder.run(status, details ? JSON.stringify(details) : null, id);
             if (details?.payment) {
                 savePayment.run(id, details.payment, details.cash_tendered_cents ?? null, details.change_cents ?? null);

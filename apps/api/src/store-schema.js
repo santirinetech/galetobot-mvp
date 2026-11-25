@@ -16,6 +16,17 @@ export function initializeStoreSchema(db) {
     }
     db.exec(`
         CREATE TABLE IF NOT EXISTS store_settings (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, scope TEXT NOT NULL CHECK(scope IN ('web','lab')),
+            owner TEXT, expires_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS chat_sessions_expiry ON chat_sessions(expires_at);
+        CREATE TABLE IF NOT EXISTS chat_turns (
+            seq INTEGER PRIMARY KEY, session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+            message_id TEXT NOT NULL, message TEXT NOT NULL, created_at INTEGER NOT NULL, deadline INTEGER NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('pending','done','failed')), error TEXT,
+            context INTEGER, applied_at INTEGER, UNIQUE(session_id,message_id)
+        );
         CREATE TABLE IF NOT EXISTS order_payments (
             order_id INTEGER PRIMARY KEY REFERENCES orders(id),
             method TEXT NOT NULL,

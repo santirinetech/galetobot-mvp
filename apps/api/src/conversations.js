@@ -170,7 +170,7 @@ export function createConversationService(db, { quoteOrder, createOrder }, { now
             !cart.phone ? 'Qual é o seu telefone com DDD?' : '');
     }
 
-    function confirm(cart, sessionId, code) {
+    function confirm(cart, sessionId, code, source) {
         if (cart.state !== 'AWAITING_CONFIRMATION' || cart.offer?.code !== code) {
             return `Nenhum resumo vigente para esse código. ${askForSummary}`;
         }
@@ -192,17 +192,17 @@ export function createConversationService(db, { quoteOrder, createOrder }, { now
         const order = createOrder({
             name: cart.name,
             phone: cart.phone,
-            source: 'whatsapp',
+            source,
             items: cart.items,
             external_key: cart.offer.orderKey
         }, quote.checkout);
         const response = `Pedido #${order.id} confirmado. Total: ${money(order.total_cents)}.`;
         saveConfirmation.run(sessionId, code, order.id, response);
-        Object.assign(cart, emptyCart(), { state: 'CONFIRMED' });
+        Object.assign(cart, emptyCart(), { state: 'CONFIRMED', orderId: order.id });
         return response;
     }
 
-    function applyMessage(cart, sessionId, text, code, batch = false) {
+    function applyMessage(cart, sessionId, text, code, batch = false, source = 'whatsapp') {
         const cash = checkout && cashIntent(text);
         const barePix = checkout && /^pix[.!]?$/.test(normalize(text));
         if (cash?.invalid) return 'Informe um valor válido em reais. Exemplo: dinheiro, troco para 60.';
@@ -211,11 +211,11 @@ export function createConversationService(db, { quoteOrder, createOrder }, { now
         if (checkout) text = simpleCheckoutCommand(text) ?? text;
         const command = normalize(text);
         const choice = orderChoice(text);
-        if (code) return confirm(cart, sessionId, code);
+        if (code) return confirm(cart, sessionId, code, source);
         if (checkout && isHumanRequest(text)) return activateHandoff(cart, sessionId);
         if (confirmationIntent(text) || choice === '1') {
             return cart.state === 'AWAITING_CONFIRMATION' && cart.offer?.code
-                ? confirm(cart, sessionId, cart.offer.code)
+                ? confirm(cart, sessionId, cart.offer.code, source)
                 : 'Envie resumo para revisar os itens antes de confirmar.';
         }
         if (/^alterar pedido[.!]?$/.test(command) || (choice === '2' && cart.state === 'AWAITING_CONFIRMATION')) {
@@ -417,7 +417,7 @@ export function createConversationService(db, { quoteOrder, createOrder }, { now
         };
     }).immediate;
 
-    const processMessage = db.transaction(({ session_id, message_id, mensagem, interpretacao }) => {
+    const processMessage = db.transaction(({ session_id, message_id, mensagem, interpretacao }, source = 'whatsapp') => {
         if (paused?.get(session_id)) {
             muteMessage.run(session_id, message_id);
             return muted;
@@ -441,7 +441,7 @@ export function createConversationService(db, { quoteOrder, createOrder }, { now
                 try {
                     response = checkout && !isDirectCommand(text)
                         ? interpretacao ? applyInterpretation(cart, session_id, text, interpretacao.actions) : unclearReply
-                        : applyMessage(cart, session_id, text, code);
+                        : applyMessage(cart, session_id, text, code, false, source);
                 } catch (error) {
                     if (!(error instanceof OrderUnavailableError)) throw error;
                     if (confirming || normalize(text) === 'resumo') {
@@ -461,6 +461,33 @@ export function createConversationService(db, { quoteOrder, createOrder }, { now
     return {
         processMessage: processMessage.immediate,
         prepareMessage: checkout ? prepareMessage : null,
+        readResponse(sessionId, messageId) {
+            const response = loadMessage.get(sessionId, messageId);
+            return response === undefined ? null : response === '' ? muted : renderResponse(response);
+        },
+        view(sessionId) {
+            const row = loadCart.get(sessionId);
+            const cart = row?.expires_at > now() ? JSON.parse(row.cart_json) : emptyCart();
+            const result = { state: paused?.get(sessionId) ? 'HUMAN' : cart.state, items: [], subtotal_cents: null,
+                shipping_cents: null, total_cents: null, order_id: cart.state === 'CONFIRMED' ? cart.orderId ?? null : null };
+            if (!cart.items.length) return result;
+            const catalog = new Map(allProducts.all().map(product => [product.id, product]));
+            result.items = cart.items.map(({ product_id, quantity }) => ({
+                product_id, quantity, name: catalog.get(product_id)?.name ?? 'Produto indisponível'
+            }));
+            try {
+                const quote = quoteOrder(cart.items);
+                result.subtotal_cents = quote.total_cents;
+                const region = checkout?.settings().regions.find(item => item.name === cart.region);
+                result.shipping_cents = cart.fulfillment === 'pickup' ? 0 :
+                    cart.fulfillment === 'delivery' ? region?.shipping_cents ?? null : null;
+                if (result.shipping_cents !== null) result.total_cents = quote.total_cents + result.shipping_cents;
+            } catch (error) {
+                if (!(error instanceof OrderUnavailableError)) throw error;
+                result.unavailable = true;
+            }
+            return result;
+        },
         listHandoffs: () => handoffs?.all() ?? [],
         resumeHandoff: (sessionId, userId) => Boolean(resume?.run(now(), userId, sessionId).changes),
         cleanupExpiredCarts: () => deleteExpiredCarts.run(now()).changes
