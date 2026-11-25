@@ -1,6 +1,17 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { interpretationSchema } from './commercial.js';
+import { ChatError } from './chat-service.js';
+
+function webCallback(chat, body, method, res, next) {
+    if (!chat) return res.status(404).json({ error: 'Canal indisponível.' });
+    try {
+        return res.json(chat[method](body));
+    } catch (error) {
+        if (!(error instanceof ChatError)) return next(error);
+        return res.status(error.status).json({ error: error.message, code: error.code });
+    }
+}
 
 export function integrationAuth(req, res, next) {
     const expected = process.env.WEBHOOK_TOKEN;
@@ -23,10 +34,11 @@ const messageSchema = z.object({
 });
 const commercialMessage = messageSchema.extend({ interpretacao: interpretationSchema.optional() });
 
-export function conversationHandler(conversations) {
-    return (req, res) => {
+export function conversationHandler(conversations, chat) {
+    return (req, res, next) => {
         const parsed = commercialMessage.safeParse(req.body);
         if (!parsed.success) return res.status(400).json({ error: 'Mensagem de conversa inválida' });
+        if (parsed.data.session_id.startsWith('web:')) return webCallback(chat, parsed.data, 'process', res, next);
         if (parsed.data.interpretacao && !conversations.prepareMessage) {
             return res.status(503).json({ error: 'Atendimento comercial indisponível neste modo' });
         }
@@ -34,10 +46,11 @@ export function conversationHandler(conversations) {
     };
 }
 
-export function contextHandler(conversations) {
-    return (req, res) => {
+export function contextHandler(conversations, chat) {
+    return (req, res, next) => {
         const parsed = messageSchema.safeParse(req.body);
         if (!parsed.success) return res.status(400).json({ error: 'Mensagem de conversa inválida' });
+        if (parsed.data.session_id.startsWith('web:')) return webCallback(chat, parsed.data, 'context', res, next);
         if (!conversations.prepareMessage) return res.status(503).json({ error: 'Atendimento comercial indisponível neste modo' });
         return res.json(conversations.prepareMessage(parsed.data));
     };

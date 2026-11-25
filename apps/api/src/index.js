@@ -6,6 +6,8 @@ import bcrypt from 'bcryptjs';
 import { initializeDatabase, selectRuntimeDatabase } from './database.js';
 import { createOrderService, orderSchema, OrderUnavailableError } from './orders.js';
 import { createConversationService, CART_CLEANUP_INTERVAL_MS } from './conversations.js';
+import { createChatService } from './chat-service.js';
+import { createChatRouters, readChatConfig } from './chat-http.js';
 import { integrationAuth, conversationHandler, contextHandler, resumeHandler } from './integrations.js';
 import { createStoreCheckout, createStoreRouter, productFields } from './store.js';
 import cookieParser from 'cookie-parser';
@@ -53,12 +55,17 @@ const { createOrder } = orders;
 const checkout = enableStore ? createStoreCheckout(db, orders) : null;
 const conversations = createConversationService(db, orders, { checkout });
 const store = checkout ? createStoreRouter(db, orders, checkout, auth, csrf) : null;
+const chatConfig = checkout ? readChatConfig(process.env) : { mode: 'off' };
+const chat = chatConfig.mode !== 'off' ? createChatService(db, conversations) : null;
+const chatRouters = chat && createChatRouters(chat, chatConfig, auth, csrf);
 conversations.cleanupExpiredCarts();
 store?.cleanup();
+chat?.clean();
 const cleanupTimer = setInterval(() => {
     try {
         conversations.cleanupExpiredCarts();
         store?.cleanup();
+        chat?.clean();
     } catch {
         console.error('Falha interna na limpeza dos carrinhos');
     }
@@ -135,8 +142,9 @@ app.post('/api/simulate', auth, csrf, (req, res) => {
 });
 // Endpoint de integração preparado; não habilita WhatsApp real. Requer segredo separado.
 app.post('/api/integrations/order', integrationAuth, orderHandler);
-app.post('/api/integrations/conversation', integrationAuth, conversationHandler(conversations));
-app.post('/api/integrations/conversation/context', integrationAuth, contextHandler(conversations));
+app.post('/api/integrations/conversation', integrationAuth, conversationHandler(conversations, chat));
+app.post('/api/integrations/conversation/context', integrationAuth, contextHandler(conversations, chat));
+if (chatRouters) app.use('/api/integrations/ai-lab', chatRouters.internal);
 if (mode === 'hosted') {
     const ready = db.prepare('SELECT 1 FROM sqlite_schema LIMIT 1');
     app.get('/healthz', (_req, res) => {
