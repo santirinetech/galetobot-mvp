@@ -172,3 +172,11 @@ docker compose --env-file .env.production up -d --no-build --wait --force-recrea
 | n8n recebe 401 | Confira nome do header e associação da credencial existente. O token da API é diferente do token do webhook. |
 | Login recebe 403 | Confira se a origem do navegador coincide exatamente com `APP_ORIGIN`. |
 | Sem resposta no WhatsApp | Confira a instância autorizada, a execução do workflow e as duas respostas HTTP da API. |
+
+### Atualização comercial da Etapa 2
+
+Em uma janela autorizada, registre os IDs das imagens atuais de API e web. Prepare tags candidatas e faça o ensaio com banco descartável. Antes de subir a API candidata no ambiente hospedado, gere e verifique um snapshot SQLite consistente conforme a seção de backup deste guia. A inicialização cria `order_payments` em transação. Os registros financeiros começam nos novos pedidos com método informado. Pedidos antigos continuam sem situação financeira atribuída.
+
+Atualize API e web com as tags candidatas, mantendo o mesmo banco e os contratos do n8n. A mudança comercial dispensa recriar o serviço WhatsApp. Valide a saúde dos dois serviços e o novo detalhe de pedido em ambiente isolado. Durante uma homologação autorizada, confira que confirmar um pedido Pix mantém o pagamento pendente até a equipe registrar o recebimento.
+
+Para rollback, restaure as imagens anteriores de API e web e mantenha as tabelas aditivas no banco ativo. A versão anterior deixa de apresentar os registros financeiros e volta ao fluxo antigo de confirmação. Restaurar o snapshot completo requer tratamento separado dos pedidos e alterações posteriores ao backup.

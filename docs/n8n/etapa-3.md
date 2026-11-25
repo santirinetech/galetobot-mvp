@@ -20,7 +20,7 @@ $code = ($workflow.nodes | Where-Object name -eq 'Code in JavaScript').parameter
 
 Em **Configurações** do painel, cadastre **Presidente Médici** com a taxa aprovada pela loja se a região ainda estiver ausente. O alias **Morro do Meio** já é reconhecido quando a região canônica existe. Uma lista de regiões vazia desabilita a entrega.
 
-Para validar com uma conta de teste no WhatsApp, peça os itens, escolha entrega e Pix, informe nome e telefone em uma única mensagem, depois informe Morro do Meio e o endereço. Confira itens, subtotal, taxa e total no resumo. Envie o comando `confirmar <código>` mostrado pelo bot e confira o pedido e a baixa de cada item no painel. Na execução da mensagem com várias intenções, confira `use_model: true` na saída de **HTTP Request**, a saída de **Message a model**, as ações normalizadas em **Code in JavaScript** e o HTTP 200 em **API de conversas**.
+Para validar com uma conta de teste no WhatsApp, peça os itens, escolha entrega e Pix, informe nome e telefone em uma única mensagem, depois informe Morro do Meio e o endereço. Confira itens, subtotal, taxa e total no resumo. Envie `1` ou “Pode confirmar” e confira o pedido e a baixa de cada item no painel. Na execução da mensagem com várias intenções, confira `use_model: true` na saída de **HTTP Request**, a saída de **Message a model**, as ações normalizadas em **Code in JavaScript** e o HTTP 200 em **API de conversas**.
 
 ## Importar e testar
 
@@ -36,12 +36,12 @@ Para validar com uma conta de teste no WhatsApp, peça os itens, escolha entrega
 {"session_id":"homologacao@lid","message_id":"etapa3-001","mensagem":"Quero dois galetos e um arroz."}
 ```
 
-Continue com `entrega Morro do Meio` ou `retirada`, `endereço Rua Teste, 10` na entrega, `nome Cliente Teste`, `telefone 11900000000`, `pagamento Pix` e `resumo`. Envie o comando `confirmar <código>` mostrado pela API. Confira o número e a baixa no painel. Reenvie a confirmação e confira que o mesmo pedido permanece. Teste também `atendente`, seguido de outra mensagem. A primeira confirma a transferência, e a seguinte é suprimida. Em **Configurações → Atendimento humano**, um administrador pode retomar a sessão. O cliente precisa pedir um novo resumo antes de confirmar.
+Continue com `entrega Morro do Meio` ou `retirada`, `endereço Rua Teste, 10` na entrega, `nome Cliente Teste`, `telefone 11900000000`, `pagamento Pix` e `resumo`. Envie `1` e confira o número e a baixa no painel. Reenvie a mesma mensagem com o mesmo `message_id` e confira o mesmo recibo. Envie um novo `1` com outro ID e confira que nenhum pedido adicional é criado. Teste também `atendente`, seguido de outra mensagem. A primeira confirma a transferência, e a seguinte é suprimida. Após a retomada administrativa, o cliente precisa pedir novo resumo.
 
 ## Dados, falhas e ativação
 
 - O Gemini devolve ações estruturadas. IDs de sessão e mensagem vêm do Webhook, e a API valida as ações. Ela monta respostas a partir do [conhecimento versionado](../../apps/api/src/knowledge.json) e dos dados atuais. Endereço de retirada, devoluções, alergênicos e prazo de entrega continuam pendentes se não houver cadastro. Horário vem de Configurações.
-- O código de confirmação só é aceito na mensagem original. A API usa o mesmo serviço que abastece o painel e faz a baixa de estoque. Enviar a chave Pix é uma orientação de pagamento.
+- A API decide confirmações a partir da mensagem original, da conversa e do resumo vigente. A interface do cliente mostra números e aceita linguagem natural. O formato legado `confirmar <UUID>` continua compatível.
 - A chave Pix vem da configuração administrativa, fica fora do cardápio público e do contexto do Gemini. Em um reenvio, a API consulta a chave atual. O histórico do bot armazena um marcador, sem copiar a chave na resposta persistida.
 - Se o Gemini falhar, a API oferece comandos determinísticos. Falhas de API retornam JSON com `error` e `etapa` e status HTTP correspondente, como `401` para credencial recusada e `502` para falha de transporte. O Baileys não envia esses erros como mensagens ao cliente. O silêncio com HTTP `200` fica reservado à supressão confirmada pela API.
 - Para comparar o token do arquivo com o que a API local aceita, rode `node scripts/diagnose-integration.mjs` na raiz. O diagnóstico executa uma FAQ, omite os valores das credenciais e não envia pedidos. Variáveis já presentes no shell têm precedência sobre `.env.development` no inicializador.
@@ -49,3 +49,7 @@ Continue com `entrega Morro do Meio` ou `retirada`, `endereço Rua Teste, 10` na
 - Após aprovação do piloto, coloque a atualização no workflow escolhido e mantenha **um único workflow ativo** para o atendimento. Copie a **Production URL** desse Webhook para `N8N_WEBHOOK_URL`, verifique a credencial e use o adaptador atualizado na sessão Baileys existente. Para retorno em silêncio, o adaptador respeita `{"resposta":"","suprimir_resposta":true}`. Evite iniciar outra instância para a mesma sessão.
 
 O teste automatizado local usa SQLite temporário, respostas simuladas do Gemini e as expressões do JSON exportado. A importação no n8n, a ligação às credenciais reais e o percurso real WhatsApp → n8n → API → WhatsApp exigem homologação separada e autorizada.
+
+### Compatibilidade do workflow com Pix e troco
+
+O contrato de entrada e saída permanece igual. Encaminhe `mensagem`, `message_id` e `session_id` originais, inclusive quando o contexto responder `use_model: false`. Use a ação `pix` para consultas da chave e `payment` com valor `Pix` para seleção, especialmente quando a mesma mensagem trouxer outras informações. A API interpreta as confirmações e as frases de dinheiro e troco suportadas diretamente. Nenhuma ação de confirmação ou de pagamento recebido deve ser gerada pelo modelo. Em homologação, confira esses pontos no workflow existente antes de decidir se o prompt publicado precisa de ajuste.

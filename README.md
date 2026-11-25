@@ -26,7 +26,7 @@ flowchart LR
 
 O frontend React é compilado pelo Vite. Na hospedagem, Nginx serve o build e encaminha as rotas do navegador ao Express. O SQLite persiste catálogo, estoque, configurações, clientes, pedidos e carrinhos. A confirmação registra o pedido e atualiza estoque na mesma transação.
 
-O Baileys envia ao webhook a mensagem original e seus identificadores. A API de contexto informa catálogo e dados faltantes. O prompt do Gemini pede ações JSON estruturadas e inclui exemplos de múltiplos itens, entrega, Pix e respostas curtas. O JavaScript do n8n normaliza os campos. A API valida as ações, consulta preços e frete do cadastro e devolve o campo `resposta`. O resumo inclui o código que o cliente deve enviar para confirmar.
+O Baileys envia ao webhook a mensagem original e seus identificadores. A API de contexto informa catálogo e dados faltantes. O prompt do Gemini pede ações JSON estruturadas e inclui exemplos de múltiplos itens, entrega, Pix e respostas curtas. O JavaScript do n8n normaliza os campos. A API valida as ações, consulta preços e frete do cadastro e devolve o campo `resposta`. Com um resumo vigente, o cliente pode confirmar com `1` ou com frases como “Pode confirmar”. O comando legado com UUID continua aceito.
 
 | Interface | Contrato |
 | --- | --- |
@@ -106,8 +106,7 @@ Subtotal de **R$ 159,00**, frete de **R$ 2,00** para Morro do Meio, reconhecido 
 ## Limitações e próximos passos
 
 - O painel tem uma única classe de administrador. Use uma instância isolada com dados fictícios para avaliadores.
-- A confirmação exige UUID. A confirmação natural pode ser estudada mantendo vínculo com o resumo vigente.
 - Ampliar apelidos de produtos, naturalidade das respostas e frases de cancelamento. O carrinho já aceita algumas formas de cancelamento natural.
 - Corrigir a autenticação no domínio externo do n8n. A integração validada usa a rede interna.
-- Implementar validação financeira de Pix. O fluxo atual registra a escolha da forma de pagamento.
+- A equipe verifica o recebimento de Pix externamente e registra a confirmação no detalhe do pedido. O sistema não consulta bancos nem armazena comprovantes.
 - Validar o deploy no LXC, configurar o domínio e publicar o workflow sanitizado após revisão.
