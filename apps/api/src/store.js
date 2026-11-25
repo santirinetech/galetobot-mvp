@@ -22,13 +22,21 @@ export const productFields = z.object({
     name: text(80).min(1), price_cents: cents, description: text(500), category: text(80),
     image_url: z.union([z.literal(''), z.url({ protocol: /^https$/ }).max(1000)]), active: z.boolean()
 });
+const cashFields = {
+    cash_tendered_cents: cents.positive().optional(),
+    no_change: z.boolean().optional()
+};
+const validCash = data => !(data.no_change && data.cash_tendered_cents != null) &&
+    (data.cash_tendered_cents == null && !data.no_change || data.payment?.toLowerCase() === 'dinheiro');
+export const counterPaymentSchema = z.object({ payment: text(50).min(1).optional(), ...cashFields }).refine(validCash);
 const checkoutSchema = customerSchema.extend({
     items: itemsSchema,
     fulfillment: z.enum(['pickup', 'delivery']),
     payment: text(50).min(1),
     region: text(80).default(''),
-    address: text(180).default('')
-});
+    address: text(180).default(''),
+    ...cashFields
+}).refine(validCash);
 const tokenSchema = z.object({ token: z.uuid() });
 const statusFlow = { pending: ['confirmed'], confirmed: ['preparing'], preparing: ['ready'], ready: ['completed'], completed: [] };
 const storeDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -38,9 +46,9 @@ export function createStoreCheckout(db, orders) {
     const readSettings = db.prepare('SELECT value FROM store_settings WHERE id=1').pluck();
     const settings = () => JSON.parse(readSettings.get() ?? JSON.stringify(defaultSettings));
 
-    function summarize(data) {
+    function summarize(data, { counter = false } = {}) {
         const config = settings();
-        if (!config.menu_open) throw new OrderUnavailableError('Pedidos pelo cardápio estão fechados.');
+        if (!counter && !config.menu_open) throw new OrderUnavailableError('Pedidos pelo cardápio estão fechados.');
         const payment = config.payments.find(value => value.toLocaleLowerCase('pt-BR') === data.payment?.toLocaleLowerCase('pt-BR'));
         if (!payment) throw new OrderUnavailableError('Forma de pagamento indisponível.');
         const region = config.regions.find(row => row.name.toLocaleLowerCase('pt-BR') === data.region?.toLocaleLowerCase('pt-BR'));
@@ -113,12 +121,22 @@ export function createStoreRouter(db, orders, checkout, auth, csrf) {
     const checkoutLimit = rateLimit({ windowMs: 60000, limit: 60, standardHeaders: 'draft-7', legacyHeaders: false,
         message: { error: 'Muitas tentativas. Aguarde um minuto.' } });
 
+    function pixInstructions(payment) {
+        const key = payment?.method.toLowerCase() === 'pix' && payment.status === 'pending' && settings().pix_key;
+        return key ? { pix_instructions: { key, notice: 'A equipe verificará o recebimento do Pix.' } } : {};
+    }
+
+    function receipt(order) {
+        return { id: order.id, total_cents: order.total_cents, status: order.status,
+            ...pixInstructions(paymentByOrder.get(order.id)) };
+    }
+
     const confirm = db.transaction(token => {
         const row = getCheckout.get(token);
         if (!row) throw new OrderUnavailableError('Cotação inválida ou expirada.');
         if (row.order_id) {
             const order = orderById.get(row.order_id);
-            return { id: order.id, total_cents: order.total_cents, status: order.status };
+            return receipt(order);
         }
         if (row.expires_at <= Date.now()) throw new OrderUnavailableError('Cotação expirada. Revise o pedido.');
         const data = JSON.parse(row.request);
@@ -126,7 +144,7 @@ export function createStoreRouter(db, orders, checkout, auth, csrf) {
         if (JSON.stringify(quote) !== row.summary) throw new OrderUnavailableError('O resumo mudou. Calcule e revise novamente.');
         const order = orders.createOrder({ ...data, source: 'site' }, quote.checkout);
         saveReceipt.run(order.id, token);
-        return { ...order, status: 'pending' };
+        return receipt({ ...order, status: 'pending' });
     }).immediate;
 
     router.get('/menu', (_req, res) => {
@@ -142,12 +160,13 @@ export function createStoreRouter(db, orders, checkout, auth, csrf) {
         const { lines, ...totals } = summary;
         res.status(201).json({ token, ...totals, items: lines });
     }));
-    router.post('/menu/confirm', csrf, checkoutLimit, withBody(tokenSchema, ({ token }, _req, res) => res.json(confirm(token))));
+    router.post('/menu/confirm', csrf, checkoutLimit, withBody(tokenSchema, ({ token }, _req, res) =>
+        res.set('Cache-Control', 'no-store').json(confirm(token))));
     router.post('/menu/status', csrf, checkoutLimit, withBody(tokenSchema, ({ token }, _req, res) => {
         const row = getCheckout.get(token);
         const order = row?.order_id && orderById.get(row.order_id);
         if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
-        return res.json({ id: order.id, status: order.status, total_cents: order.total_cents });
+        return res.set('Cache-Control', 'no-store').json(receipt(order));
     }));
 
     router.patch('/products/:id', auth, csrf, withBody(productFields.partial().refine(p => Object.keys(p).length > 0), (fields, req, res) => {
@@ -181,8 +200,9 @@ export function createStoreRouter(db, orders, checkout, auth, csrf) {
         if (!order) return res.status(404).json({ error: 'Pedido não encontrado.' });
         const items = db.prepare(`SELECT i.*, COALESCE(i.product_name,p.name) name FROM order_items i
             JOIN products p ON p.id=i.product_id WHERE i.order_id=? ORDER BY i.id`).all(order.id);
-        return res.json({ ...order, items, details: JSON.parse(order.checkout_details ?? 'null'),
-            payment: paymentByOrder.get(order.id) ?? null });
+        const payment = paymentByOrder.get(order.id) ?? null;
+        return res.set('Cache-Control', 'no-store').json({ ...order, items, details: JSON.parse(order.checkout_details ?? 'null'),
+            payment, ...pixInstructions(payment) });
     });
     router.patch('/orders/:id/payment', auth, csrf, withBody(z.strictObject({ status: z.literal('received') }),
         (_data, req, res) => {

@@ -5,6 +5,7 @@ import { api, money } from './client.js';
 import { Customers, Dashboard, Orders, Products, Settings, Stock } from './admin-sections.jsx';
 import { PublicMenu } from './public-menu.jsx';
 import { Chat } from './chat.jsx';
+import { emptyPayment, PaymentFields, paymentPayload } from './payment-fields.jsx';
 import { Brand, Dialog, Loading, Notice, ProductPhoto } from './ui.jsx';
 import './style.css';
 
@@ -26,6 +27,8 @@ function App() {
     const [cart, setCart] = useState({});
     const [name, setName] = useState('');
     const [phone, setPhone] = useState('');
+    const [payment, setPayment] = useState(emptyPayment);
+    const [methods, setMethods] = useState([]);
     const [error, setError] = useState('');
     const [busy, setBusy] = useState(false);
     const [storeName, setStoreName] = useState('');
@@ -46,6 +49,7 @@ function App() {
             setOrders(list);
             setDashboard(summary);
             setStoreName(settings.name);
+            setMethods(settings.payments);
             setSyncError('');
         } catch (err) {
             if (version !== refreshVersion.current) return;
@@ -111,7 +115,7 @@ function App() {
             const selected = Object.entries(cart).filter(([, qty]) => qty > 0)
                 .map(([id, quantity]) => ({ product_id: Number(id), quantity }));
             if (!selected.length) throw new Error('Selecione produtos.');
-            const sale = { name, phone: phone.replace(/\D/g, ''), source: 'counter', items: selected };
+            const sale = { name, phone: phone.replace(/\D/g, ''), source: 'counter', items: selected, ...paymentPayload(payment) };
             const fingerprint = JSON.stringify(sale);
             if (pending.current?.fingerprint !== fingerprint) {
                 // Idempotency key is public-irrelevant and needs uniqueness, including on private HTTP LAN.
@@ -121,6 +125,7 @@ function App() {
             await api('/orders', { method: 'POST', body: { ...sale, external_key: pending.current.key } });
             pending.current = null;
             setCart({});
+            setPayment(emptyPayment);
             setTab('pedidos');
             await refresh();
         }, 'Pedido registrado com sucesso.');
@@ -169,6 +174,7 @@ function App() {
                 setCart({});
                 setName('');
                 setPhone('');
+                setPayment(emptyPayment);
                 pending.current = null;
                 setTab('dashboard');
         });
@@ -211,7 +217,8 @@ function App() {
             {tab === 'clientes' && <Customers action={action} />}
             {tab === 'settings' && <Settings {...{ action, busy, refresh }} />}
             {tab === 'novo' && <>
-                <section className="panel"><h2>Cliente</h2>{customerFields}</section>
+                <section className="panel"><h2>Cliente</h2>{customerFields}
+                    <PaymentFields payments={methods} value={payment} onChange={setPayment} /></section>
                 <section className="panel">
                     <h2>Selecione os itens</h2>
                     {products.filter(p => p.active || cart[p.id]).map(product => <div className="product" key={product.id}>

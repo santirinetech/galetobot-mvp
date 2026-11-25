@@ -119,6 +119,7 @@ export function Orders({ orders, refresh, action, busy, error }) {
             {details.items.map(item => <div key={item.id} className="product"><span>{item.quantity} × {item.name}</span><strong>{money(item.quantity * item.unit_price_cents)}</strong></div>)}
             {details.details && <p className="total"><span>Frete</span><span>{money(details.details.shipping_cents)}</span></p>}
             <p className="total"><strong>Total</strong><strong>{money(details.total_cents)}</strong></p>
+            {details.pix_instructions && <p>Chave Pix <strong>{details.pix_instructions.key}</strong></p>}
             {details.payment?.method.toLowerCase() === 'pix' && details.payment.status === 'pending' &&
                 <button className="secondary full" disabled={busy} onClick={() => {
                     if (!window.confirm('Você conferiu o recebimento deste Pix?')) return;

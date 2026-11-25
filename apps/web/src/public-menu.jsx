@@ -3,13 +3,15 @@ import { api, money, statuses } from './client.js';
 import { ArrowDown, MessageCircle, Minus, Plus, ShoppingBag } from 'lucide-react';
 import { Badge, Brand, Dialog, Empty, Loading, Notice, ProductPhoto } from './ui.jsx';
 import { Chat } from './chat.jsx';
+import { emptyPayment, PaymentFields, paymentPayload } from './payment-fields.jsx';
 
-const initial = { name: '', phone: '', fulfillment: 'pickup', payment: '', address: '', region: '' };
+const initial = { name: '', phone: '', fulfillment: 'pickup', address: '', region: '' };
 
 export function PublicMenu() {
     const [menu, setMenu] = useState(null);
     const [cart, setCart] = useState({});
     const [customer, setCustomer] = useState(initial);
+    const [payment, setPayment] = useState(emptyPayment);
     const [quote, setQuote] = useState(null);
     const [receipt, setReceipt] = useState(null);
     const [tracking, setTracking] = useState(() => sessionStorage.getItem('galeto-menu-tracking'));
@@ -87,7 +89,7 @@ export function PublicMenu() {
             const items = Object.entries(cart).filter(([, count]) => count > 0)
                 .map(([id, quantity]) => ({ product_id: Number(id), quantity }));
             setQuote(await api('/menu/quote', {
-                method: 'POST', body: { ...customer, phone: customer.phone.replace(/\D/g, ''), items }
+                method: 'POST', body: { ...customer, ...paymentPayload(payment), phone: customer.phone.replace(/\D/g, ''), items }
             }));
         });
     }
@@ -148,6 +150,10 @@ export function PublicMenu() {
             {receipt && <section className="panel" aria-live="polite">
                 <h2>Pedido #{receipt.id}</h2>
                 <p>{statuses[receipt.status] || receipt.status} · {money(receipt.total_cents)}</p>
+                {receipt.pix_instructions && <div>
+                    <p>Chave Pix <strong>{receipt.pix_instructions.key}</strong></p>
+                    <p>{receipt.pix_instructions.notice}</p>
+                </div>}
             </section>}
             {categories.length > 1 && <nav className="category-links" aria-label="Categorias">
                 {categories.map((category, index) => <a href={`#categoria-${index}`} key={category}>{category}</a>)}
@@ -197,10 +203,10 @@ export function PublicMenu() {
                             </select></label>
                             <label>Endereço<input required maxLength={180} value={customer.address} onChange={e => update('address', e.target.value)} /></label>
                         </>}
-                        <label>Pagamento<select required value={customer.payment} onChange={e => update('payment', e.target.value)}>
-                            <option value="">Selecione</option>
-                            {config.payments.map(payment => <option key={payment}>{payment}</option>)}
-                        </select></label>
+                        <PaymentFields required payments={config.payments} value={payment} onChange={value => {
+                            setPayment(value);
+                            setQuote(null);
+                        }} />
                         <button disabled={!config.menu_open || Boolean(pending)}>Revisar pedido</button>
                     </fieldset>
                 </form>
@@ -209,6 +215,8 @@ export function PublicMenu() {
                     <ul>{quote.items.map(item => <li key={item.product_id}>{item.quantity} × {item.name} · {money(item.unit_price_cents * item.quantity)}</li>)}</ul>
                     <p>{quote.checkout.fulfillment === 'delivery' ? `Entrega em ${quote.checkout.address} · ${quote.checkout.region}` : 'Retirada no estabelecimento'} · {quote.checkout.payment}</p>
                     <p>Frete · {money(quote.checkout.shipping_cents)}</p>
+                    {quote.checkout.change_cents != null && <p>Troco · {money(quote.checkout.change_cents)}</p>}
+                    {quote.checkout.payment.toLowerCase() === 'pix' && <p>Se houver chave Pix cadastrada, ela será exibida após confirmar o pedido.</p>}
                     <p className="total">Total <strong>{money(quote.total_cents)}</strong></p>
                     <button disabled={busy || Boolean(pending)} onClick={() => confirm(quote.token)}>Confirmar pedido</button>
                 </div>}

@@ -38,6 +38,8 @@ O workflow publicado tem sufixos nos nomes dos nós e alterações manuais no pr
 
 ## Estrutura
 
+O chat público e o Laboratório IA são opcionais e não dependem do Baileys. Consulte o [guia de atendimento multicanal](docs/atendimento-web.md) para configurar a demonstração isolada, homologar a integração e preparar o rollback.
+
 | Caminho | Conteúdo |
 | --- | --- |
 | `apps/api/` | Node.js, Express, SQLite, Baileys, regras comerciais e testes |

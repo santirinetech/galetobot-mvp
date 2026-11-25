@@ -144,3 +144,46 @@ test('public chat orders without Baileys, keeps cookies isolated and reports int
     for (let i = 0; i < 8; i++) assert.equal((await site.request(prefix + '/sessions', {})).status, 201);
     assert.equal((await site.request(prefix + '/sessions', {})).status, 429);
 });
+
+test('conventional checkout and counter share cash validation while Pix stays pending', { timeout: 15000 }, async t => {
+    const site = await instance(t, 'demo');
+    const admin = (await site.request('/login', { email, password })).cookie;
+    const config = { name: 'Loja teste', hours: '', menu_note: '', menu_open: true,
+        regions: [{ name: 'Centro', shipping_cents: 700 }], payments: ['Pix', 'Dinheiro'], pix_key: 'pix-fixture@example.invalid' };
+    const saveConfig = async () => fetch(site.base + '/api/settings', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', Origin: origin, Cookie: admin }, body: JSON.stringify(config)
+    });
+    assert.equal((await saveConfig()).status, 200);
+    const common = { name: 'Cliente teste', phone: '11900000000', items: [{ product_id: 1, quantity: 1 }] };
+    const publicOrder = { ...common, fulfillment: 'delivery', region: 'Centro', address: 'Rua Teste, 10' };
+    const quote = data => site.request('/menu/quote', { ...publicOrder, ...data });
+    assert.equal((await quote({ payment: 'Dinheiro', cash_tendered_cents: 5000 })).status, 409);
+    assert.equal((await quote({ payment: 'Dinheiro', cash_tendered_cents: 6000, no_change: true })).status, 400);
+    const cash = await quote({ payment: 'Dinheiro', cash_tendered_cents: 6000 });
+    assert.equal(cash.body.checkout.change_cents, 800);
+    const cashOrder = await site.request('/menu/confirm', { token: cash.body.token });
+    assert.equal(cashOrder.status, 200);
+    const cashDetails = (await site.request('/orders/' + cashOrder.body.id, undefined, admin)).body;
+    assert.equal(cashDetails.payment.change_cents, 800);
+
+    const pix = await quote({ payment: 'Pix' });
+    assert.equal(pix.body.pix_instructions, undefined);
+    assert.equal((await site.request('/menu')).body.settings.pix_key, undefined);
+    const pixOrder = await site.request('/menu/confirm', { token: pix.body.token });
+    assert.equal(pixOrder.body.pix_instructions.key, 'pix-fixture@example.invalid');
+    assert.equal((await site.request('/orders/' + pixOrder.body.id, undefined, admin)).body.payment.status, 'pending');
+
+    config.menu_open = false;
+    assert.equal((await saveConfig()).status, 200);
+    const counter = { ...common, source: 'counter', items: [{ product_id: 1, quantity: 8 }],
+        payment: 'Dinheiro', no_change: true, external_key: randomUUID() };
+    const counterOrder = await site.request('/orders', counter, admin);
+    assert.equal(counterOrder.status, 201);
+    assert.equal((await site.request('/orders', counter, admin)).body.id, counterOrder.body.id);
+    const details = (await site.request('/orders/' + counterOrder.body.id, undefined, admin)).body;
+    assert.equal(details.status, 'confirmed');
+    assert.equal(details.payment.status, 'pending');
+    assert.equal(details.payment.change_cents, 0);
+    assert.equal(site.count('orders'), 3);
+    assert.equal(site.count('stock_movements'), 3);
+});

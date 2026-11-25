@@ -9,7 +9,7 @@ import { createConversationService, CART_CLEANUP_INTERVAL_MS } from './conversat
 import { createChatService } from './chat-service.js';
 import { createChatRouters, readChatConfig } from './chat-http.js';
 import { integrationAuth, conversationHandler, contextHandler, resumeHandler } from './integrations.js';
-import { createStoreCheckout, createStoreRouter, productFields } from './store.js';
+import { counterPaymentSchema, createStoreCheckout, createStoreRouter, productFields } from './store.js';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -55,7 +55,14 @@ const { createOrder } = orders;
 const checkout = enableStore ? createStoreCheckout(db, orders) : null;
 const conversations = createConversationService(db, orders, { checkout });
 const store = checkout ? createStoreRouter(db, orders, checkout, auth, csrf) : null;
-const chatConfig = checkout ? readChatConfig(process.env) : { mode: 'off' };
+let chatConfig = { mode: 'off' };
+if (checkout) {
+    try {
+        chatConfig = readChatConfig(process.env);
+    } catch {
+        console.error('Configuração do chat inválida. O atendimento inteligente ficou desabilitado.');
+    }
+}
 const chat = chatConfig.mode !== 'off' ? createChatService(db, conversations) : null;
 const chatRouters = chat && createChatRouters(chat, chatConfig, auth, csrf);
 conversations.cleanupExpiredCarts();
@@ -124,17 +131,23 @@ app.patch('/api/products/:id/stock', auth, csrf, (req, res) => {
     if (!setStock(req.params.id, parsed.data.stock)) return res.status(404).json({ error: 'Produto não encontrado' });
     return res.json({ ok: true });
 });
-function orderHandler(req, res, next) {
+function orderHandler(req, res, next, allowPayment = false) {
     const p = orderSchema.safeParse(req.body);
     if (!p.success) return fail(res, 'Dados do pedido inválidos: telefone com DDD, nome e itens são obrigatórios');
     try {
-        return res.status(201).json(createOrder(p.data));
+        const financial = allowPayment && checkout && p.data.source === 'counter' ? counterPaymentSchema.safeParse(req.body) : null;
+        if (financial && !financial.success) return fail(res, 'Revise a forma de pagamento e o troco.');
+        const details = financial?.data?.payment
+            ? () => checkout.summarize({ ...p.data, ...financial.data, fulfillment: 'pickup' }, { counter: true }).checkout
+            : null;
+        const result = createOrder(p.data, details);
+        return res.status(201).json(result);
     } catch (error) {
         if (error instanceof OrderUnavailableError) return res.status(409).json({ error: error.message });
         return next(error);
     }
 }
-app.post('/api/orders', auth, csrf, orderHandler);
+app.post('/api/orders', auth, csrf, (req, res, next) => orderHandler(req, res, next, true));
 // Simulador interno do canal WhatsApp, autenticado com a sessão do administrador.
 app.post('/api/simulate', auth, csrf, (req, res) => {
     const p = z.object({ phone: z.string().regex(/^\d{10,11}$/), message: z.string().min(1).max(500) }).safeParse(req.body); if (!p.success) return fail(res, 'Mensagem inválida'); const { phone, message } = p.data; const recent = db.prepare(`SELECT o.id,o.total_cents,o.created_at FROM orders o JOIN customers c ON c.id=o.customer_id WHERE c.phone=? ORDER BY o.id DESC LIMIT 1`).get(phone); const items = recent ? db.prepare(`SELECT p.name,oi.product_id,oi.quantity,p.stock,p.price_cents FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE oi.order_id=?`).all(recent.id) : []; const lower = message.toLocaleLowerCase('pt-BR'); if (/de sempre|último pedido|ultimo pedido|repetir/.test(lower)) { if (!recent) return res.json({ reply: 'Ainda não encontrei pedidos anteriores para esse número. O que você gostaria de pedir?', suggested_items: [] }); const shortages = items.filter(x => x.stock < x.quantity); const description = items.map(x => `${x.quantity}x ${x.name}`).join(', '); const reply = shortages.length ? `Seu último pedido foi ${description}. Hoje ${shortages.map(x => `${x.name}: apenas ${x.stock} disponível(is)`).join('; ')}. Quer ajustar as quantidades?` : `Seu último pedido foi ${description}. Temos esses itens disponíveis agora. Quer repetir?`; return res.json({ reply, suggested_items: items.map(x => ({ product_id: x.product_id, quantity: x.quantity })), stock_checked: true }); }

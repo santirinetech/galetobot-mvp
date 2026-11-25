@@ -55,6 +55,7 @@ export function createOrderService(db, { enableStore = false } = {}) {
             if (existing) return { ...existing, replayed: true };
         }
 
+        if (typeof details === 'function') details = details();
         const { total_cents: subtotal, lines } = quoteOrder(order.items);
         const total_cents = subtotal + (enableStore ? (details?.shipping_cents ?? 0) : 0);
         const customerStatement = ['whatsapp', 'site', 'web-chat'].includes(order.source) ? registerCustomer : saveCustomer;
