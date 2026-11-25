@@ -3,12 +3,12 @@ export const sources = { counter: 'Balcão', site: 'Site', 'web-chat': 'Chat Web
 export const statuses = { pending: 'Pendente', confirmed: 'Confirmado', preparing: 'Em preparo', ready: 'Pronto', completed: 'Concluído' };
 export const nextStatus = { pending: 'confirmed', confirmed: 'preparing', preparing: 'ready', ready: 'completed' };
 
-export async function api(path, { body, ...options } = {}) {
+export async function api(path, { body, file, ...options } = {}) {
     let response;
     try {
         response = await fetch('/api' + path, {
-            credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-            ...options, body: body === undefined ? undefined : JSON.stringify(body)
+            credentials: 'same-origin', headers: { 'Content-Type': file?.type || 'application/json' },
+            ...options, body: file ?? (body === undefined ? undefined : JSON.stringify(body))
         });
     } catch (cause) {
         throw new Error('Falha de rede ao acessar o painel. Verifique a conexão e tente novamente.', { cause });

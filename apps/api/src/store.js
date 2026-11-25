@@ -95,7 +95,7 @@ function withBody(schema, action) {
     };
 }
 
-export function createStoreRouter(db, orders, checkout, auth, csrf) {
+export function createStoreRouter(db, orders, checkout, auth, csrf, media) {
     const router = Router();
     const { settings, summarize } = checkout;
     const orderById = db.prepare('SELECT o.*, c.name customer_name, c.phone FROM orders o LEFT JOIN customers c ON c.id=o.customer_id WHERE o.id=?');
@@ -169,7 +169,15 @@ export function createStoreRouter(db, orders, checkout, auth, csrf) {
         return res.set('Cache-Control', 'no-store').json(receipt(order));
     }));
 
+    if (media) {
+        router.get('/media/:name', media.serve);
+        const readPhoto = db.prepare('SELECT image_url FROM products WHERE id=?').pluck();
+        const writePhoto = db.prepare('UPDATE products SET image_url=? WHERE id=?');
+        media.routes(router, '/products/:id/photo', auth, csrf,
+            req => readPhoto.get(req.params.id), (req, url) => writePhoto.run(url, req.params.id));
+    }
     router.patch('/products/:id', auth, csrf, withBody(productFields.partial().refine(p => Object.keys(p).length > 0), (fields, req, res) => {
+        const previous = fields.image_url !== undefined && db.prepare('SELECT image_url FROM products WHERE id=?').pluck().get(req.params.id);
         const result = db.prepare(`
             UPDATE products SET name=COALESCE(?,name),price_cents=COALESCE(?,price_cents),
                 description=COALESCE(?,description),category=COALESCE(?,category),
@@ -178,6 +186,7 @@ export function createStoreRouter(db, orders, checkout, auth, csrf) {
         `)
             .run(fields.name ?? null, fields.price_cents ?? null, fields.description ?? null, fields.category ?? null,
                 fields.image_url ?? null, fields.active === undefined ? null : Number(fields.active), req.params.id);
+        if (result.changes && previous) void media?.removeIfUnused(previous);
         return result.changes ? res.json({ ok: true }) : res.status(404).json({ error: 'Produto não encontrado.' });
     }));
     const adjust = db.transaction((id, delta, reason) => {

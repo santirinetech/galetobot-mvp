@@ -31,6 +31,7 @@ services:
       N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-}
       N8N_WEBHOOK_TOKEN: ${N8N_WEBHOOK_TOKEN:-}
       DATABASE_PATH: /data/${DATABASE_FILENAME:-galetobot.db}
+      PRODUCT_MEDIA_DIR: /data/product-media
     volumes:
       - type: bind
         source: ${DATABASE_DIR:-./runtime/db}

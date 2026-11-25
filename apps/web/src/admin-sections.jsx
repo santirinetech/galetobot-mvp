@@ -1,10 +1,9 @@
-﻿import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ArrowDownLeft, ArrowRight, ArrowUpRight, Package, Pencil, Plus, RefreshCw, Search } from 'lucide-react';
 import { api, money, sources, statuses } from './client.js';
 import { Badge, Dialog, Empty, formatDate, Loading, Notice, OrderStatus, ProductPhoto } from './ui.jsx';
 import { WhatsAppSettings } from './whatsapp-settings.jsx';
 
-const emptyProduct = { name: '', price: '', stock: '0', description: '', category: '', image_url: '', active: true };
 const parseMoney = value => value.trim() ? Math.round(Number(value.trim().replace(',', '.')) * 100) : NaN;
 const source = order => sources[order.source] || 'Origem desconhecida';
 
@@ -30,68 +29,6 @@ function StockLevel({ stock }) {
     return <Badge tone={stock === 0 ? 'danger' : stock <= 2 ? 'warning' : 'success'}>
         {stock === 0 ? 'Esgotado' : stock <= 2 ? 'Estoque baixo' : 'Em estoque'}
     </Badge>;
-}
-
-export function Products({ products, action, refresh, busy, error }) {
-    const [draft, setDraft] = useState(emptyProduct);
-    const [editing, setEditing] = useState(null);
-    const [open, setOpen] = useState(false);
-    function field(name, value) { setDraft(previous => ({ ...previous, [name]: value })); }
-    function edit(product) {
-        setEditing(product?.id ?? null);
-        setDraft(product ? {
-            name: product.name, price: (product.price_cents / 100).toFixed(2),
-            stock: String(product.stock), description: product.description || '', category: product.category || '',
-            image_url: product.image_url || '', active: Boolean(product.active)
-        } : emptyProduct);
-        setOpen(true);
-    }
-    function save(event) {
-        event.preventDefault();
-        action(async () => {
-            const { price, stock, ...metadata } = draft;
-            const body = { ...metadata, price_cents: parseMoney(price) };
-            if (!Number.isSafeInteger(body.price_cents) || body.price_cents < 0) throw new Error('Informe um preço válido.');
-            await api(editing ? `/products/${editing}` : '/products', {
-                method: editing ? 'PATCH' : 'POST',
-                body: editing ? body : { ...body, stock: Number(stock) }
-            });
-            setOpen(false);
-            await refresh();
-        }, editing ? 'Produto atualizado.' : 'Produto cadastrado.');
-    }
-    return <>
-        <div className="module-bar"><p>{products.length} {products.length === 1 ? 'produto no catálogo' : 'produtos no catálogo'}</p>
-            <button onClick={() => edit()}><Plus size={19} /> Novo produto</button></div>
-        {!products.length ? <section className="panel"><Empty>Cadastre o primeiro produto do catálogo.</Empty></section> : <section className="catalog-grid">
-            {products.map(product => <article className="panel catalog-card" key={product.id}>
-                <ProductPhoto url={product.image_url} name={product.name} className="catalog-photo" />
-                <div className="catalog-body">
-                    <span className="muted">{product.category || 'Sem categoria'}</span>
-                    <h2>{product.name}</h2>
-                    <p className="catalog-price">{money(product.price_cents)} <small>{product.stock} un.</small></p>
-                    <div className="catalog-actions">{product.active ? <StockLevel stock={product.stock} /> : <Badge>Inativo</Badge>}
-                        <button className="secondary small" aria-label={`Editar ${product.name}`} onClick={() => edit(product)}><Pencil size={16} /> Editar</button>
-                    </div>
-                </div>
-            </article>)}
-        </section>}
-        {open && <Dialog title={editing ? 'Editar produto' : 'Novo produto'} onClose={() => setOpen(false)}>
-            {error && <Notice>{error}</Notice>}
-            <form onSubmit={save}>
-                <label>Nome<input required maxLength={80} value={draft.name} onChange={e => field('name', e.target.value)} /></label>
-                <div className="form-grid">
-                    <label>Categoria<input maxLength={80} value={draft.category} onChange={e => field('category', e.target.value)} /></label>
-                    <label>Preço em reais<input required inputMode="decimal" value={draft.price} onChange={e => field('price', e.target.value)} /></label>
-                </div>
-                <label>Descrição<textarea maxLength={500} value={draft.description} onChange={e => field('description', e.target.value)} /></label>
-                <label>URL HTTPS da imagem<input type="url" value={draft.image_url} onChange={e => field('image_url', e.target.value)} /></label>
-                {!editing && <label>Estoque inicial<input required type="number" min={0} value={draft.stock} onChange={e => field('stock', e.target.value)} /></label>}
-                <label className="check"><input type="checkbox" checked={draft.active} onChange={e => field('active', e.target.checked)} /> Ativo no cardápio</label>
-                <button className="full" disabled={busy}>{editing ? 'Salvar alterações' : 'Cadastrar produto'}</button>
-            </form>
-        </Dialog>}
-    </>;
 }
 
 export function Stock({ products, action, refresh, busy, error }) {

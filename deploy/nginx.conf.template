@@ -14,6 +14,11 @@ server {
         proxy_pass http://api:3000/api/;
     }
 
+    location ~ ^/api/(products/[0-9]+/photo|settings/logo)$ {
+        client_max_body_size 5m;
+        proxy_pass http://api:3000;
+    }
+
     location = /healthz {
         proxy_pass http://api:3000/healthz;
     }

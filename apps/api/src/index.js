@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'node:url';
+import { createMedia } from './media.js';
 
 import express from 'express';
 import bcrypt from 'bcryptjs';
@@ -47,8 +48,9 @@ app.use(express.json({ limit: '100kb' }));
 app.use(cookieParser());
 const origin = process.env.APP_ORIGIN || 'http://localhost:5173';
 const enableStore = mode !== 'operational';
+const runtime = selectRuntimeDatabase(mode, process.env);
 const db = initializeDatabase({
-    ...selectRuntimeDatabase(mode, process.env),
+    ...runtime,
     email: process.env.ADMIN_EMAIL,
     password: process.env.ADMIN_PASSWORD,
     enableStore
@@ -57,7 +59,8 @@ const orders = createOrderService(db, { enableStore });
 const { createOrder } = orders;
 const checkout = enableStore ? createStoreCheckout(db, orders) : null;
 const conversations = createConversationService(db, orders, { checkout });
-const store = checkout ? createStoreRouter(db, orders, checkout, auth, csrf) : null;
+const media = checkout ? createMedia(db, mode !== 'test' && process.env.PRODUCT_MEDIA_DIR || runtime.databasePath + '.media') : null;
+const store = checkout ? createStoreRouter(db, orders, checkout, auth, csrf, media) : null;
 const whatsappAutomation = enableStore ? createWhatsAppAutomation(db) : null;
 const whatsappControlToken = controlToken(process.env);
 let chatConfig = { mode: 'off' };

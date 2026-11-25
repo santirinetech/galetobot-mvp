@@ -9,6 +9,7 @@ import { createInterface } from 'node:readline';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
+import sharp from 'sharp';
 
 test('API HTTP isolada cobre regressões, erros seguros e reenvio após perda da resposta', { timeout: 15000 }, async t => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'galetobot-http-'));
@@ -448,6 +449,29 @@ test('API HTTP isolada cobre regressões, erros seguros e reenvio após perda da
         const byNumber = await storeRequest('/orders?view=list&q=%236', { admin: true });
         assert.equal(byNumber.items[0].fulfillment, 'delivery');
         await storeRequest('/orders?view=board&before=2', { admin: true, status: 400 });
+        const png = await sharp({ create: { width: 1350, height: 36, channels: 3, background: '#ea580c' } }).png().toBuffer();
+        const upload = (bytes, headers = panelHeaders, type = 'image/png') => fetch(baseUrl + '/api/products/1/photo', {
+            method: 'POST', headers: { origin, ...headers, 'content-type': type }, body: bytes
+        });
+        assert.equal((await upload(png, {})).status, 401);
+        assert.equal((await upload(png, { ...panelHeaders, origin: 'https://invalid.example' })).status, 403);
+        assert.equal((await upload(Buffer.from('<svg/>'))).status, 422);
+        assert.equal((await upload(png, panelHeaders, 'image/jpeg')).status, 422);
+        const huge = await sharp({ create: { width: 4097, height: 1, channels: 3, background: '#000' } }).png().toBuffer();
+        assert.equal((await upload(huge)).status, 422);
+        const uploaded = await upload(png);
+        assert.equal(uploaded.status, 201);
+        const { url: image } = await uploaded.json();
+        const served = await fetch(baseUrl + image);
+        const info = await sharp(Buffer.from(await served.arrayBuffer())).metadata();
+        assert.equal(info.format, 'webp');
+        assert.equal(info.width, 1200);
+        assert.equal((await storeRequest('/menu')).products.find(product => product.id === 1).image_url, image);
+        const { url: replacement } = await (await upload(png)).json();
+        assert.notEqual(replacement, image);
+        assert.equal((await fetch(baseUrl + image)).status, 404);
+        assert.equal((await storeRequest('/products/1/photo', { method: 'DELETE', admin: true })).url, '');
+        assert.equal((await fetch(baseUrl + replacement)).status, 404);
     } finally {
         db.close();
     }

@@ -1,15 +1,16 @@
-﻿import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { Counter, Products } from './catalog-operation.jsx';
 import { AdminShell } from './admin-shell.jsx';
 import { Dashboard } from './overview.jsx';
 import { Orders } from './orders-pilot.jsx';
 import { Feedback } from './design-system.jsx';
-import { api, money } from './client.js';
-import { Customers, Products, Settings, Stock } from './admin-sections.jsx';
+import { api } from './client.js';
+import { Customers, Settings, Stock } from './admin-sections.jsx';
 import { PublicMenu } from './public-menu.jsx';
 import { Chat } from './chat.jsx';
-import { emptyPayment, PaymentFields, paymentPayload } from './payment-fields.jsx';
-import { Brand, Loading, Notice, ProductPhoto } from './ui.jsx';
+import { emptyPayment, paymentPayload } from './payment-fields.jsx';
+import { Brand, Loading, Notice } from './ui.jsx';
 import './style.css';
 
 function App() {
@@ -99,9 +100,9 @@ function App() {
         });
     }
 
-    function quantity(product, delta) {
+    function quantity(product, requested) {
         setCart(previous => ({
-            ...previous, [product.id]: Math.max(0, Math.min(product.stock, 100, (previous[product.id] || 0) + delta))
+            ...previous, [product.id]: Math.max(0, Math.min(product.stock, 100, Number.isSafeInteger(requested) ? requested : 0))
         }));
     }
 
@@ -125,11 +126,6 @@ function App() {
             await refresh();
         }, 'Pedido registrado com sucesso.');
     }
-
-    const customerFields = <>
-        <label>Nome do cliente<input value={name} onChange={e => setName(e.target.value)} /></label>
-        <label>Telefone com DDD<input type="tel" value={phone} onChange={e => setPhone(e.target.value)} /></label>
-    </>;
 
     if (logged === null) return <main className="login"><section className="panel">
         <Brand />
@@ -169,7 +165,7 @@ function App() {
                 setTab('dashboard');
         });
     }
-    const pilot = tab === 'dashboard' || tab === 'pedidos';
+    const pilot = ['dashboard', 'pedidos', 'produtos', 'novo'].includes(tab);
     return <AdminShell {...{ tab, navigate, logout, storeName, busy, pilot }}>
             {syncError && (pilot
                 ? <Feedback kind="error" title="Falha ao carregar a operação" onRetry={refresh}>{syncError}</Feedback>
@@ -184,24 +180,7 @@ function App() {
             {tab === 'estoque' && dashboard && <Stock {...{ products, refresh, action, busy, error }} />}
             {tab === 'clientes' && <Customers action={action} />}
             {tab === 'settings' && <Settings {...{ action, busy, refresh }} />}
-            {tab === 'novo' && <>
-                <section className="panel"><h2>Cliente</h2>{customerFields}
-                    <PaymentFields payments={methods} value={payment} onChange={setPayment} /></section>
-                <section className="panel">
-                    <h2>Selecione os itens</h2>
-                    {products.filter(p => p.active || cart[p.id]).map(product => <div className="product" key={product.id}>
-                        <div className="item-identity"><ProductPhoto url={product.image_url} name={product.name} /><div><strong>{product.name}</strong><small>{money(product.price_cents)} · {product.active ? product.stock + ' disponíveis' : 'Inativo'}</small></div></div>
-                        <div className="qty">
-                            <button className="secondary" aria-label={'Remover ' + product.name} onClick={() => quantity(product, -1)}>−</button>
-                            <b>{cart[product.id] || 0}</b>
-                            <button aria-label={'Adicionar ' + product.name} disabled={!product.active || (cart[product.id] || 0) >= Math.min(product.stock, 100)}
-                                onClick={() => quantity(product, 1)}>+</button>
-                        </div>
-                    </div>)}
-                    <p className="total">Total estimado <strong>{money(products.reduce((sum, p) => sum + p.price_cents * (cart[p.id] || 0), 0))}</strong></p>
-                    <button disabled={busy} onClick={() => order()}>Confirmar pedido de balcão</button>
-                </section>
-            </>}
+            {tab === 'novo' && <Counter {...{ products, cart, name, setName, phone, setPhone, methods, payment, setPayment, busy, order }} change={quantity} />}
             {tab === 'ia' && <Chat lab />}
     </AdminShell>;
 }
