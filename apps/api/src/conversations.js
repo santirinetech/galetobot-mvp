@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { customerSchema, MAX_ITEM_QUANTITY, MAX_ORDER_ITEMS, OrderUnavailableError } from './orders.js';
-import { asksConfirmation, confirmationPattern, handoffReply, isCancellation, isDirectCommand, isHumanRequest, knowledge, modelContext, normalize, resolveRegion, simpleCheckoutCommand, unclearReply } from './commercial.js';
+import { cashIntent, confirmationIntent, confirmationPattern, handoffReply, isCancellation, isDirectCommand, isHumanRequest, knowledge, modelContext, normalize, orderChoice, resolveRegion, simpleCheckoutCommand, unclearReply } from './commercial.js';
 
 export const CART_TTL_MS = 30 * 60 * 1000;
 export const CART_CLEANUP_INTERVAL_MS = 60 * 1000;
@@ -48,11 +48,13 @@ function itemCommand(cart, { action, quantity, label }, products, quoteOrder) {
     return `Carrinho atualizado. ${askForSummary}`;
 }
 
-function summary(cart, quote, instructions = '') {
+function summary(cart, quote, timestamp, instructions = '') {
     const rows = quote.lines.map(line => `${line.quantity} × ${line.name} (${money(line.unit_price_cents)} cada)`);
     if (quote.checkout) {
         const { fulfillment, region, shipping_cents, payment } = quote.checkout;
         rows.push(fulfillment === 'delivery' ? `Entrega em ${region} · frete ${money(shipping_cents)}\nEndereço: ${quote.checkout.address}` : 'Retirada no estabelecimento', `Pagamento: ${payment}`);
+        if (quote.checkout.cash_tendered_cents != null) rows.push(`Valor entregue: ${money(quote.checkout.cash_tendered_cents)}`);
+        if (quote.checkout.change_cents != null) rows.push(`Troco: ${money(quote.checkout.change_cents)}`);
     } else if (instructions) {
         if (cart.fulfillment) rows.push(cart.fulfillment === 'delivery' ? 'Entrega' : 'Retirada no estabelecimento');
         if (cart.payment) rows.push(`Pagamento: ${cart.payment}`);
@@ -68,11 +70,11 @@ function summary(cart, quote, instructions = '') {
 
     if (quote.checkout) rows.push(`Cliente: ${cart.name} · ${cart.phone}`);
     const snapshot = JSON.stringify(quote);
-    if (cart.offer?.snapshot !== snapshot) {
-        cart.offer = { code: randomUUID(), orderKey: `whatsapp:${randomUUID()}`, snapshot };
+    if (cart.offer?.snapshot !== snapshot || !cart.offer.expiresAt || cart.offer.expiresAt <= timestamp) {
+        cart.offer = { code: randomUUID(), orderKey: `whatsapp:${randomUUID()}`, snapshot, expiresAt: timestamp + CART_TTL_MS };
     }
     cart.state = 'AWAITING_CONFIRMATION';
-    rows.push(`Para confirmar este pedido, envie confirmar ${cart.offer.code}`);
+    rows.push('1 - Confirmar pedido\n2 - Alterar pedido\n3 - Cancelar pedido');
     return rows.join('\n');
 }
 
@@ -172,9 +174,20 @@ export function createConversationService(db, { quoteOrder, createOrder }, { now
         if (cart.state !== 'AWAITING_CONFIRMATION' || cart.offer?.code !== code) {
             return `Nenhum resumo vigente para esse código. ${askForSummary}`;
         }
+        if (cart.offer.expiresAt <= now()) {
+            cart.offer = null;
+            cart.state = 'BUILDING_CART';
+            return `O resumo expirou. ${askForSummary}`;
+        }
+        const missing = nextQuestion(cart);
+        if (!cart.items.length || missing || !customerSchema.safeParse(cart).success) {
+            cart.offer = null;
+            cart.state = 'BUILDING_CART';
+            return missing || askForSummary;
+        }
         const quote = checkout ? checkout.summarize(cart) : quoteOrder(cart.items);
         if (cart.offer.snapshot !== JSON.stringify(quote)) {
-            return `O resumo mudou. Revise os itens e os preços.\n${summary(cart, quote)}`;
+            return `O resumo mudou. Revise os itens e os preços.\n${summary(cart, quote, now())}`;
         }
         const order = createOrder({
             name: cart.name,
@@ -190,16 +203,29 @@ export function createConversationService(db, { quoteOrder, createOrder }, { now
     }
 
     function applyMessage(cart, sessionId, text, code, batch = false) {
+        const cash = checkout && cashIntent(text);
+        const barePix = checkout && /^pix[.!]?$/.test(normalize(text));
+        if (cash?.invalid) return 'Informe um valor válido em reais. Exemplo: dinheiro, troco para 60.';
+        if (cash) text = 'pagamento Dinheiro';
+        if (barePix && cart.items.length) text = 'pagamento Pix';
         if (checkout) text = simpleCheckoutCommand(text) ?? text;
         const command = normalize(text);
+        const choice = orderChoice(text);
         if (code) return confirm(cart, sessionId, code);
         if (checkout && isHumanRequest(text)) return activateHandoff(cart, sessionId);
-        if (asksConfirmation(text)) {
-            return cart.offer?.code
-                ? `Confirme pelo código apresentado: confirmar ${cart.offer.code}`
+        if (confirmationIntent(text) || choice === '1') {
+            return cart.state === 'AWAITING_CONFIRMATION' && cart.offer?.code
+                ? confirm(cart, sessionId, cart.offer.code)
                 : 'Envie resumo para revisar os itens antes de confirmar.';
         }
-        if (isCancellation(text)) {
+        if (/^alterar pedido[.!]?$/.test(command) || (choice === '2' && cart.state === 'AWAITING_CONFIRMATION')) {
+            if (cart.state === 'CONFIRMED') return 'O pedido já foi registrado. Fale com a loja para alterá-lo.';
+            cart.offer = null;
+            cart.state = 'BUILDING_CART';
+            return `Diga o que deseja alterar. ${help}`;
+        }
+        if (isCancellation(text) || /^cancelar pedido[.!]?$/.test(command) ||
+            (choice === '3' && cart.state === 'AWAITING_CONFIRMATION')) {
             if (cart.state === 'CONFIRMED') return 'O pedido já foi registrado. Fale com a loja para cancelá-lo.';
             Object.assign(cart, emptyCart(), { state: 'CANCELLED' });
             return 'Carrinho cancelado.';
@@ -210,7 +236,7 @@ export function createConversationService(db, { quoteOrder, createOrder }, { now
                 || 'Nenhum produto disponível no cardápio.';
         }
         if (checkout && command === 'formas de pagamento') return `Formas cadastradas: ${checkout.settings().payments.join(', ')}.`;
-        if (checkout && command === 'pix') return pixMarker;
+        if (barePix && !cart.items.length) return pixMarker;
         if (checkout && command.startsWith('frete ')) return describeRegion(text.replace(/^frete\s+/iu, ''));
         if (command === 'resumo') {
             if (!cart.items.length) return 'O carrinho está vazio.';
@@ -218,9 +244,9 @@ export function createConversationService(db, { quoteOrder, createOrder }, { now
             const quote = checkout && !instructions ? checkout.summarize(cart) : quoteOrder(cart.items);
             if (checkout && instructions && cart.fulfillment === 'delivery') {
                 const region = checkout.settings().regions.find(region => region.name === cart.region);
-                if (region) return summary(cart, quote, `${describeRegion(region.name)} ${instructions}`);
+                if (region) return summary(cart, quote, now(), `${describeRegion(region.name)} ${instructions}`);
             }
-            return summary(cart, quote, checkout ? nextQuestion(cart) : '');
+            return summary(cart, quote, now(), checkout ? nextQuestion(cart) : '');
         }
         const fulfillment = /^(entrega|endere[cç]o|pagamento)[ \t]+([^\r\n]+)$/i.exec(text);
         if (checkout && (['retirada', 'entrega'].includes(command) || fulfillment)) {
@@ -246,12 +272,22 @@ export function createConversationService(db, { quoteOrder, createOrder }, { now
                 const payment = checkout.settings().payments.find(entry => normalize(entry) === normalize(value));
                 if (!payment) return 'Forma de pagamento indisponível.';
                 cart.payment = payment;
+                if (cash) Object.assign(cart, cash);
+                else {
+                    delete cart.cash_tendered_cents;
+                    delete cart.no_change;
+                }
             }
             cart.offer = null;
             cart.state = 'BUILDING_CART';
             const next = batch ? '' : nextQuestion(cart) || askForSummary;
             if (field === 'entrega') return `${describeRegion(cart.region)} ${next}`;
-            return field === 'pagamento' ? `Pagamento: ${cart.payment}. ${next}` : next;
+            if (field !== 'pagamento') return next;
+            const paymentNote = normalize(cart.payment) === 'pix' ? ` ${pixMarker}` : '';
+            if (!batch && !nextQuestion(cart)) {
+                return `Pagamento: ${cart.payment}.${paymentNote}\n${applyMessage(cart, sessionId, 'resumo', null)}`;
+            }
+            return `Pagamento: ${cart.payment}.${paymentNote} ${next}`.trimEnd();
         }
 
         const change = /^(adicionar|alterar)[ \t]+(\d+)[ \t]+([^\r\n]+)$/i.exec(text);
@@ -317,7 +353,8 @@ export function createConversationService(db, { quoteOrder, createOrder }, { now
                         response = 'Informe esse dado ou o nome do item na sua mensagem para eu conferir.';
                     } else {
                         const before = JSON.stringify(cart);
-                        response = applyMessage(cart, sessionId, [keyword, action.quantity, value].filter(Boolean).join(' '), null, true).trim();
+                        response = type === 'pix' ? pixMarker :
+                            applyMessage(cart, sessionId, [keyword, action.quantity, value].filter(Boolean).join(' '), null, true).trim();
                         const changed = before !== JSON.stringify(cart);
                         itemsChanged ||= changed && priority(type) === 0;
                         detailsChanged ||= changed && priority(type) !== 0;
@@ -338,15 +375,17 @@ export function createConversationService(db, { quoteOrder, createOrder }, { now
             }
         }
         else if (detailsChanged && question && !responses.some(response => response.includes(question))) responses.push(question);
-        return [...new Set(responses)].join('\n') || (cart.items.length && question) || unclearReply;
+        const combinedPix = responses.some(response => response !== pixMarker && response.includes(pixMarker));
+        return [...new Set(combinedPix ? responses.filter(response => response !== pixMarker) : responses)].join('\n')
+            || (cart.items.length && question) || unclearReply;
     }
 
     function renderResponse(response) {
         if (!response.includes(pixMarker)) return { resposta: response };
         const { pix_key, payments } = checkout.settings();
         const pix = pix_key && payments.some(payment => normalize(payment) === 'pix')
-            ? `Chave Pix cadastrada: ${pix_key}. O envio da chave não confirma o pagamento.`
-            : 'A chave Pix está pendente de configuração ou o pagamento via Pix está indisponível. Envie “atendente”.';
+            ? `Chave Pix cadastrada: ${pix_key}. O envio da chave não confirma o pagamento. A equipe vai verificar o recebimento.`
+            : 'A chave Pix está indisponível no momento. A equipe pode orientar você sobre o pagamento.';
         return { resposta: response.replaceAll(pixMarker, () => pix) };
     }
 
@@ -395,7 +434,8 @@ export function createConversationService(db, { quoteOrder, createOrder }, { now
             const stored = loadCart.get(session_id);
             const expired = stored && stored.expires_at <= timestamp;
             const cart = stored && !expired ? JSON.parse(stored.cart_json) : emptyCart();
-            if (expired && code) {
+            const confirming = code || confirmationIntent(text) || orderChoice(text) === '1';
+            if (expired && confirming) {
                 response = 'O carrinho expirou. Adicione os produtos novamente.';
             } else {
                 try {
@@ -404,7 +444,7 @@ export function createConversationService(db, { quoteOrder, createOrder }, { now
                         : applyMessage(cart, session_id, text, code);
                 } catch (error) {
                     if (!(error instanceof OrderUnavailableError)) throw error;
-                    if (code || normalize(text) === 'resumo') {
+                    if (confirming || normalize(text) === 'resumo') {
                         cart.offer = null;
                         cart.state = 'BUILDING_CART';
                     }

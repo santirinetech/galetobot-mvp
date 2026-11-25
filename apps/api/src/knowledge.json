@@ -2,7 +2,7 @@
   "faq": {
     "pedir": {
       "pergunta": "Como faço um pedido?",
-      "resposta": "Escolha os itens, informe como deseja receber e pagar e revise o resumo. O pedido só é registrado depois que você confirma com o código apresentado."
+      "resposta": "Escolha os itens, informe como deseja receber e pagar e revise o resumo. O pedido só é registrado quando você confirma o resumo na conversa."
     },
     "retirada": {
       "pergunta": "Posso retirar meu pedido?",

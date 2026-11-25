@@ -101,6 +101,10 @@ test('API HTTP isolada cobre regressões, erros seguros e reenvio após perda da
     assert.equal((await products.json()).find(product => product.id === 1).stock, 9);
 
     const session_id = 'teste@lid';
+    const legacyConfirm = (db, session) => {
+        const cart = JSON.parse(db.prepare('SELECT cart_json FROM conversation_carts WHERE session_id=?').pluck().get(session));
+        return `confirmar ${cart.offer.code}`;
+    };
     const unauthorized = await post('/integrations/conversation', { session_id, message_id: '1', mensagem: 'cardápio' });
     assert.equal(unauthorized.status, 401);
     const command = async (message_id, mensagem) => {
@@ -114,8 +118,8 @@ test('API HTTP isolada cobre regressões, erros seguros e reenvio após perda da
     await command('fulfillment', 'retirada');
     await command('payment', 'pagamento Pix');
     const summary = await command('4', 'resumo');
-    const confirm = summary.match(/confirmar [0-9a-f-]{36}$/)?.[0];
-    assert.ok(confirm);
+    assert.match(summary, /1 - Confirmar pedido/);
+    const confirm = '1';
 
     const db = new Database(databasePath, { fileMustExist: true });
     try {
@@ -256,7 +260,7 @@ test('API HTTP isolada cobre regressões, erros seguros e reenvio após perda da
         settings.pix_key = 'chave-demo@example.invalid';
         await storeRequest('/settings', { method: 'PUT', body: settings, admin: true });
         assert.equal(Object.hasOwn((await storeRequest('/menu')).settings, 'pix_key'), false);
-        assert.match(await say('Como faço um pedido?', [{ type: 'faq', value: 'pedir' }]), /código apresentado/);
+        assert.match(await say('Como faço um pedido?', [{ type: 'faq', value: 'pedir' }]), /confirma o resumo/);
         assert.match(await say('Qual é o prazo?', [{ type: 'faq', value: 'prazo' }]), /pendente de configuração/);
         assert.match(await say('Quanto custa o Galeto?', [{ type: 'price', value: 'Galeto' }]), /51,00/);
         assert.match(await say('Tem Pizza?', [{ type: 'availability', value: 'Pizza' }]), /Não encontrei/);
@@ -288,9 +292,8 @@ test('API HTTP isolada cobre regressões, erros seguros e reenvio após perda da
         assert.match(await say('Me passa a chave?', [{ type: 'pix' }], { id: 'pix-request' }), /nova-chave-demo@example.invalid/);
         const commercialQuote = await say('resumo');
         assert.match(commercialQuote, /68,00/);
-        const commercialConfirm = commercialQuote.match(/confirmar [0-9a-f-]{36}$/)?.[0];
-        assert.ok(commercialConfirm);
-        assert.doesNotMatch(await say('Pode confirmar', [{ type: 'clarify' }]), /Pedido #/);
+        const commercialConfirm = legacyConfirm(db, commercialSession);
+        assert.match(commercialQuote, /1 - Confirmar pedido/);
         assert.equal(db.prepare('SELECT COUNT(*) FROM orders').pluck().get(), 4);
         const invalid = await post('/integrations/conversation', {
             session_id: commercialSession, message_id: 'fake-confirm', mensagem: 'olá',
@@ -316,6 +319,7 @@ test('API HTTP isolada cobre regressões, erros seguros e reenvio após perda da
         const silenced = await conversation(commercialConfirm, []);
         assert.deepEqual(silenced.result, { resposta: '', suprimir_resposta: true });
         assert.equal(silenced.context.use_model, false);
+        assert.deepEqual((await conversation('Sim', [])).result, { resposta: '', suprimir_resposta: true });
         assert.deepEqual(formatResponse({ skip_api: true }, { statusCode: 200, body: silenced.context }).body,
             { resposta: '', suprimir_resposta: true });
         const activeHandoffs = await storeRequest('/conversation-handoffs', { admin: true });
@@ -324,7 +328,8 @@ test('API HTTP isolada cobre regressões, erros seguros e reenvio após perda da
         await storeRequest('/conversation-handoffs/resume', { method: 'POST', body: { session_id: commercialSession }, admin: true });
         assert.deepEqual(await storeRequest('/conversation-handoffs', { admin: true }), []);
         assert.match(await say(commercialConfirm), /Nenhum resumo vigente/);
-        const newConfirm = (await say('resumo')).match(/confirmar [0-9a-f-]{36}$/)?.[0];
+        assert.match(await say('resumo'), /1 - Confirmar pedido/);
+        const newConfirm = legacyConfirm(db, commercialSession);
         assert.ok(newConfirm && newConfirm !== commercialConfirm);
         assert.match(await say(newConfirm), /Pedido #5 confirmado.*68,00/);
         assert.match(await say(newConfirm), /Pedido #5 confirmado/);
@@ -387,17 +392,33 @@ test('API HTTP isolada cobre regressões, erros seguros e reenvio após perda da
         assert.match(neighborhood.result.resposta, /Presidente Médici:.*9,00[\s\S]*endereço/);
         const complete = (await talk('Rua de Teste, 42', [{ type: 'address', value: 'Rua de Teste, 42' }])).result.resposta;
         assert.match(complete, /Presidente Médici.*9,00[\s\S]*Rua de Teste, 42[\s\S]*Pagamento: Pix[\s\S]*63,00[\s\S]*72,00/);
-        const approve = complete.match(/confirmar [0-9a-f-]{36}$/)?.[0];
-        assert.ok(approve);
-        await talk('Pode confirmar');
+        assert.match(complete, /1 - Confirmar pedido/);
         assert.equal(db.prepare('SELECT COUNT(*) FROM orders').pluck().get(), 5);
         assert.equal(db.prepare('SELECT stock FROM products WHERE id=?').pluck().get(farofa.id), 8);
-        assert.match((await talk(approve)).result.resposta, /Pedido #6 confirmado.*72,00/);
-        assert.match((await talk(approve)).result.resposta, /Pedido #6 confirmado/);
+        assert.match((await talk('Pode confirmar')).result.resposta, /Pedido #6 confirmado.*72,00/);
+        assert.match((await talk('Pode confirmar')).result.resposta, /Envie resumo/);
         const delivered = await storeRequest('/orders/6', { admin: true });
         assert.equal(delivered.details.region, 'Presidente Médici');
         assert.equal(delivered.details.payment, 'Pix');
         assert.equal(delivered.details.shipping_cents, 900);
+        assert.equal(delivered.status, 'pending');
+        assert.equal(delivered.payment.status, 'pending');
+        assert.equal(oldOrder.payment, null);
+        const markPayment = { method: 'PATCH', body: { status: 'received' } };
+        await storeRequest('/orders/6/status', { method: 'PATCH', admin: true, body: { status: 'confirmed' } });
+        await storeRequest('/orders/6/payment', { ...markPayment, status: 401 });
+        const invalidOrigin = await fetch(`${baseUrl}/api/orders/6/payment`, {
+            method: 'PATCH', headers: { ...panelHeaders, 'content-type': 'application/json', origin: 'http://localhost:9999' },
+            body: JSON.stringify(markPayment.body)
+        });
+        assert.equal(invalidOrigin.status, 403);
+        assert.equal((await storeRequest('/orders/6', { admin: true })).payment.status, 'pending');
+        const received = await storeRequest('/orders/6/payment', { ...markPayment, admin: true });
+        assert.equal(received.status, 'received');
+        assert.ok(received.received_at && received.received_by);
+        assert.deepEqual(await storeRequest('/orders/6/payment', { ...markPayment, admin: true }), received);
+        assert.equal(db.prepare("SELECT COUNT(*) FROM audit WHERE action='pix_received'").pluck().get(), 1);
+        assert.equal((await storeRequest('/orders/6', { admin: true })).status, 'confirmed');
         assert.equal((await storeRequest('/orders', { admin: true }))[0].id, 6);
         assert.equal(db.prepare('SELECT COUNT(*) FROM stock_movements WHERE order_id=6').pluck().get(), 3);
         assert.equal(db.prepare('SELECT stock FROM products WHERE id=?').pluck().get(farofa.id), 7);

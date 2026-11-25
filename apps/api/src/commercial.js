@@ -23,18 +23,41 @@ export const confirmationPattern = /^confirmar ([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[
 export const isHumanRequest = text => /^(?:(?:quero|preciso|gostaria de) falar com (?:um |uma |o |a )?)?(?:atendente(?: humano)?|atendimento humano)[.!]?$/.test(normalize(text));
 export const isCancellation = text => /^(?:cancelar|cancelar carrinho|quero cancelar(?: o carrinho| o atendimento| meu pedido)?)[.!]?$/.test(normalize(text));
 export const asksConfirmation = text => /^(?:confirmar(?: pedido)?|confirmo(?: o pedido)?|sim|pode confirmar)[.!]?$/.test(normalize(text));
+export const orderChoice = text => /^(1(?:\s*[-–]\s*confirmar pedido)?|2(?:\s*[-–]\s*alterar pedido)?|3(?:\s*[-–]\s*cancelar pedido)?)[.!]?$/
+    .exec(normalize(text))?.[1][0];
+export function confirmationIntent(text) {
+    return asksConfirmation(text) || /^(?:pode fechar|tudo certo)[.!]?$/.test(normalize(text));
+}
+
+export function cashIntent(text) {
+    const command = normalize(text).replace(/[.!]$/, '');
+    if (/^(?:dinheiro[, ]+)?(?:sem troco|nao preciso de troco)$/.test(command)) {
+        return { cash_tendered_cents: null, no_change: true };
+    }
+    const amount = /^(?:(?:pagamento )?dinheiro[, ]+)?troco (?:para|pra)\s*(.*)$/.exec(command)
+        ?? /^(?:eu )?vou pagar com (?=r\$|[\d+-])(.*)$/.exec(command);
+    if (!amount) return null;
+    const money = /^(?:r\$\s*)?(\d{1,7}|\d{1,3}(?:\.\d{3}){1,2})(?:,(\d{1,2}))?$/.exec(amount[1]);
+    const cents = money && Number(money[1].replaceAll('.', '')) * 100 + Number((money[2] ?? '').padEnd(2, '0'));
+    return cents > 0 && cents <= 100_000_000 ? { cash_tendered_cents: cents, no_change: false } : { invalid: true };
+}
+
 export function simpleCheckoutCommand(text) {
     const command = normalize(text).replace(/[.!]+$/, '');
     if (/^(?:(?:eu )?quero |prefiro )?entrega$/.test(command)) return 'entrega';
     if (/^(?:(?:eu )?quero |prefiro )?retirada$/.test(command)) return 'retirada';
-    if (/^(?:(?:eu )?quero pagar|vou pagar|pago) (?:via|no|com|por) pix$/.test(command)) return 'pagamento Pix';
+    if (/^(?:(?:eu )?(?:quero pagar|vou pagar|pago) (?:via|no|com|por|em) )pix$/.test(command)) return 'pagamento Pix';
+    if (/^(?:vou de|prefiro) pix$/.test(command)) return 'pagamento Pix';
+    if (/^cartao$/.test(command)) return 'pagamento Cartão';
+    if (/^dinheiro$/.test(command)) return 'pagamento Dinheiro';
     return null;
 }
 export function isDirectCommand(text) {
     const command = normalize(text);
-    return isHumanRequest(text) || isCancellation(text) || asksConfirmation(text) || confirmationPattern.test(text) ||
+    return isHumanRequest(text) || isCancellation(text) || confirmationIntent(text) || orderChoice(text) || cashIntent(text) ||
+        /^alterar pedido[.!]?$/.test(command) || confirmationPattern.test(text) ||
         simpleCheckoutCommand(text) !== null ||
-        /^(?:cardapio|resumo|retirada|pix|formas de pagamento)$/.test(command) ||
+        /^(?:cardapio|resumo|retirada|pix|formas de pagamento)[.!]?$/.test(command) ||
         (/^(?:(?:adicionar|alterar) \d+|remover|entrega|frete|endereco|pagamento|nome|telefone) .+$/u.test(command) &&
             !/(?:[,;]|\be\b)\s*(?:vou pagar|quero|meu nome|meu telefone|pagamento|telefone|nome|pix|entrega|retirada|endereco)\b/.test(command));
 }
