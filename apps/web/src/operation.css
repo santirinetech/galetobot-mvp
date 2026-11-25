@@ -30,3 +30,7 @@
     .operation-counter-cart { display:none; }
     .ops-shell .operation-mobile-cart { display:flex; position:sticky; bottom:67px; width:100%; z-index:2; }
 }
+
+.customer-row { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr) auto; }
+.operation-line > div { min-width:0; overflow-wrap:anywhere; }
+@media(max-width:720px) { .customer-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } }

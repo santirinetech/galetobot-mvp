@@ -472,6 +472,12 @@ test('API HTTP isolada cobre regressões, erros seguros e reenvio após perda da
         assert.equal((await fetch(baseUrl + image)).status, 404);
         assert.equal((await storeRequest('/products/1/photo', { method: 'DELETE', admin: true })).url, '');
         assert.equal((await fetch(baseUrl + replacement)).status, 404);
+        const clients = await storeRequest('/customers?q=11900000042&sort=recent', { admin: true });
+        assert.equal(clients.length, 1);
+        assert.equal(clients[0].ordered_cents, 7200);
+        assert.ok(clients[0].last_order_at);
+        const auditedStock = await storeRequest('/stock/movements', { admin: true });
+        assert.ok(auditedStock.some(movement => movement.order_id === 6 && movement.source === 'whatsapp'));
     } finally {
         db.close();
     }

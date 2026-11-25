@@ -202,7 +202,8 @@ export function createStoreRouter(db, orders, checkout, auth, csrf, media) {
     }), (data, req, res) => adjust(req.params.id, data.delta, data.reason)
         ? res.status(201).json({ ok: true }) : res.status(404).json({ error: 'Produto não encontrado.' })));
     router.get('/stock/movements', auth, (_req, res) => res.json(db.prepare(`
-        SELECT m.*, p.name FROM stock_movements m JOIN products p ON p.id=m.product_id ORDER BY m.id DESC LIMIT 200
+        SELECT m.*, p.name, o.source FROM stock_movements m JOIN products p ON p.id=m.product_id
+        LEFT JOIN orders o ON o.id=m.order_id ORDER BY m.id DESC LIMIT 200
     `).all()));
     router.get('/orders/:id', auth, (req, res) => {
         const order = orderById.get(req.params.id);
@@ -250,10 +251,21 @@ export function createStoreRouter(db, orders, checkout, auth, csrf, media) {
             low_stock: db.prepare('SELECT id,name,stock FROM products WHERE active=1 AND stock<=2 ORDER BY stock,name').all()
         });
     });
-    router.get('/customers', auth, (_req, res) => res.json(db.prepare(`
-        SELECT c.id,c.name,c.phone, COUNT(o.id) AS orders FROM customers c LEFT JOIN orders o ON c.id=o.customer_id
-        GROUP BY c.id ORDER BY c.name,c.id LIMIT 250
-    `).all()));
+    router.get('/customers', auth, (req, res) => {
+        const filters = z.object({ q: z.string().trim().max(100).default(''),
+            sort: z.enum(['name','recent','repeat']).default('name') }).safeParse(req.query);
+        if (!filters.success) return res.status(400).json({ error: 'Filtro inválido.' });
+        const { q, sort } = filters.data;
+        const phone = /^[+\d ().-]+$/.test(q) ? q.replace(/\D/g, '') : '';
+        const order = { name: 'c.name', recent: 'last_order_at DESC', repeat: 'orders DESC' }[sort];
+        return res.set('Cache-Control', 'no-store').json(db.prepare(`
+            SELECT c.id,c.name,c.phone,COUNT(o.id) AS orders,MAX(o.created_at) AS last_order_at,
+                COALESCE(SUM(o.total_cents),0) AS ordered_cents
+            FROM customers c LEFT JOIN orders o ON o.customer_id=c.id
+            WHERE @q='' OR instr(order_fold(c.name),order_fold(@q))>0 OR (@phone<>'' AND instr(c.phone,@phone)>0)
+            GROUP BY c.id ORDER BY ${order}, c.id LIMIT 250
+        `).all({ q, phone }));
+    });
     router.get('/customers/:id/orders', auth, (req, res) => res.json(db.prepare(`
         SELECT id,source,status,total_cents,created_at FROM orders WHERE customer_id=? ORDER BY id DESC LIMIT 100
     `).all(req.params.id)));

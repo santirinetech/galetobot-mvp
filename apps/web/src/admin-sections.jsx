@@ -1,7 +1,10 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowDownLeft, ArrowRight, ArrowUpRight, Package, Pencil, Plus, RefreshCw, Search } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowRight, Plus, RefreshCw } from 'lucide-react';
 import { api, money, sources, statuses } from './client.js';
 import { Badge, Dialog, Empty, formatDate, Loading, Notice, OrderStatus, ProductPhoto } from './ui.jsx';
+import { Amount, Button, Feedback, Field, Overlay, PageHeading, Surface, Tag } from './design-system.jsx';
+import { matches, StockTag } from './catalog-operation.jsx';
+import { OrderTag } from './order-tags.jsx';
 import { WhatsAppSettings } from './whatsapp-settings.jsx';
 
 const parseMoney = value => value.trim() ? Math.round(Number(value.trim().replace(',', '.')) * 100) : NaN;
@@ -10,10 +13,20 @@ const source = order => sources[order.source] || 'Origem desconhecida';
 function useResource(path) {
     const [data, setData] = useState(null);
     const [error, setError] = useState('');
+    const pending = useRef(null);
     const load = useCallback(async () => {
-        try { setData(await api(path)); setError(''); } catch (err) { setError(err.message); }
+        pending.current?.abort();
+        const controller = new AbortController();
+        pending.current = controller;
+        try {
+            const updated = await api(path, { signal: controller.signal });
+            if (!controller.signal.aborted) { setData(updated); setError(''); }
+        } catch (err) { if (!controller.signal.aborted) setError(err.message); }
     }, [path]);
-    useEffect(() => { load(); }, [load]);
+    useEffect(() => {
+        const timer = setTimeout(load, 120);
+        return () => { clearTimeout(timer); pending.current?.abort(); };
+    }, [load]);
     return { data, error, load };
 }
 
@@ -25,14 +38,12 @@ function PanelHeading({ title, children }) {
     return <div className="panel-heading"><h2>{title}</h2>{children}</div>;
 }
 
-function StockLevel({ stock }) {
-    return <Badge tone={stock === 0 ? 'danger' : stock <= 2 ? 'warning' : 'success'}>
-        {stock === 0 ? 'Esgotado' : stock <= 2 ? 'Estoque baixo' : 'Em estoque'}
-    </Badge>;
-}
-
 export function Stock({ products, action, refresh, busy, error }) {
     const history = useResource('/stock/movements');
+    const [query, setQuery] = useState('');
+    const [filter, setFilter] = useState('');
+    const visible = products.filter(item => matches(item.name, query) &&
+        (!filter || filter === 'empty' && item.stock === 0 || filter === 'low' && item.stock > 0 && item.stock <= 2));
     const [open, setOpen] = useState(false);
     const [productId, setProductId] = useState('');
     const [units, setUnits] = useState('1');
@@ -48,64 +59,83 @@ export function Stock({ products, action, refresh, busy, error }) {
         }, 'Movimentação registrada.');
     }
     return <>
-        <section className="panel">
-            <PanelHeading title="Saldos do estoque"><button onClick={() => start()} disabled={!products.length}><Plus size={18} /> Movimentar</button></PanelHeading>
-            {!products.length ? <Empty>Nenhum produto cadastrado.</Empty> : products.map(product => <div key={product.id} className="product stock-row">
-                <div className="item-identity"><ProductPhoto url={product.image_url} name={product.name} /><div><strong>{product.name}</strong><small>{product.stock} un.</small></div></div>
-                <StockLevel stock={product.stock} /><button className="secondary small" aria-label={`Movimentar ${product.name}`} onClick={() => start(product.id)}><ArrowUpRight size={17} /></button>
-            </div>)}
-        </section>
-        <section className="panel">
-            <PanelHeading title="Histórico de movimentações"><button className="secondary small" onClick={history.load}><RefreshCw size={16} /> Atualizar</button></PanelHeading>
-            <ResourceError resource={history} />
-            {!history.data && !history.error && <Loading />}
-            {history.data?.length === 0 && <Empty>Nenhuma movimentação registrada.</Empty>}
-            {history.data?.map(row => <div key={row.id} className="product">
-                <div className="item-identity"><span className={'metric-icon ' + (row.delta > 0 ? 'mint' : 'peach')}>{row.delta > 0 ? <ArrowDownLeft size={17} /> : <ArrowUpRight size={17} />}</span>
-                    <div><strong>{row.name} · {row.reason}</strong><small>{formatDate(row.created_at)}</small></div></div>
-                <Badge tone={row.delta > 0 ? 'success' : 'warning'}>{row.delta > 0 ? '+' : ''}{row.delta} · saldo {row.balance}</Badge>
-            </div>)}
-        </section>
-        {open && <Dialog title="Movimentação de estoque" onClose={() => setOpen(false)}>
-            {error && <Notice>{error}</Notice>}
-            <form onSubmit={submit}>
-                <label>Produto<select required value={productId} onChange={e => setProductId(e.target.value)}>
+        <PageHeading title="Estoque" description="Saldos e origem das movimenta??es."
+            actions={<Button variant="primary" icon={Plus} disabled={!products.length} onClick={() => start()}>Movimentar</Button>} />
+        <Surface className="operation-filters">
+            <Field label="Buscar produto" type="search" value={query} onChange={e => setQuery(e.target.value)} />
+            <Field as="select" label="Disponibilidade" value={filter} onChange={e => setFilter(e.target.value)}>
+                <option value="">Todos</option><option value="empty">Esgotados</option><option value="low">Estoque baixo</option>
+            </Field>
+        </Surface>
+        <div className="operation-split">
+            <Surface title="Saldos do estoque">
+                {!visible.length && <Feedback title="Nenhum produto neste filtro" />}
+                {visible.map(product => <div key={product.id} className="operation-line">
+                    <div><strong>{product.name}</strong><small>{product.stock} unidades dispon?veis</small></div>
+                    <div className="ds-actions"><StockTag product={product} />
+                        <Button variant="quiet" aria-label={'Movimentar ' + product.name} onClick={() => start(product.id)}>Ajustar</Button></div>
+                </div>)}
+            </Surface>
+            <Surface title="Movimenta??es" actions={<Button variant="quiet" icon={RefreshCw} onClick={history.load}>Atualizar</Button>}>
+                {history.error && <Feedback kind="error" title="Falha na consulta" onRetry={history.load}>{history.error}</Feedback>}
+                {!history.data && !history.error && <Feedback kind="loading" title="Carregando hist?rico..." />}
+                {history.data?.length === 0 && <Feedback title="Nenhuma movimenta??o registrada" />}
+                {history.data?.map(row => <div key={row.id} className="operation-line">
+                    <div><strong>{row.name} ? {row.reason}</strong>
+                        <small>{row.order_id ? source(row) + ' #' + row.order_id :
+                            row.reason === 'Saldo inicial' ? 'Cadastro' : 'Ajuste administrativo'} ? {formatDate(row.created_at)}</small></div>
+                    <Tag tone={row.delta > 0 ? 'success' : 'warn'}>{row.delta > 0 ? '+' : ''}{row.delta} ? saldo {row.balance}</Tag>
+                </div>)}
+            </Surface>
+        </div>
+        {open && <Overlay drawer title="Movimentar estoque" onClose={() => setOpen(false)}>
+            {error && <Feedback kind="error" title="Ajuste n?o conclu?do">{error}</Feedback>}
+            <form className="operation-form" onSubmit={submit}>
+                <Field as="select" label="Produto" required value={productId} onChange={e => setProductId(e.target.value)}>
                     <option value="">Selecione</option>{products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select></label>
-                <div className="form-grid">
-                    <label>Tipo<select value={type} onChange={e => setType(e.target.value)}><option value="in">Entrada</option><option value="out">Saída</option></select></label>
-                    <label>Quantidade<input type="number" min={1} required value={units} onChange={e => setUnits(e.target.value)} /></label>
-                </div>
-                <label>Motivo<input required maxLength={160} value={reason} onChange={e => setReason(e.target.value)} /></label>
-                <button className="full" disabled={busy}>Registrar movimentação</button>
+                </Field>
+                <Field as="select" label="Tipo" value={type} onChange={e => setType(e.target.value)}>
+                    <option value="in">Entrada</option><option value="out">Sa?da</option>
+                </Field>
+                <Field label="Quantidade" required type="number" min={1} value={units} onChange={e => setUnits(e.target.value)} />
+                <Field label="Motivo" required maxLength={160} value={reason} onChange={e => setReason(e.target.value)} />
+                <Button type="submit" variant="primary" disabled={busy}>Registrar movimenta??o</Button>
             </form>
-        </Dialog>}
+        </Overlay>}
     </>;
 }
 
 export function Customers({ action }) {
-    const resource = useResource('/customers');
-    const [selection, setSelection] = useState(null);
     const [query, setQuery] = useState('');
-    const search = query.trim().toLocaleLowerCase('pt-BR');
-    const visible = (resource.data || []).filter(c => c.name.toLocaleLowerCase('pt-BR').includes(search) || (c.phone || '').includes(search));
+    const [sort, setSort] = useState('name');
+    const [selection, choose] = useState(null);
+    const resource = useResource('/customers?' + new URLSearchParams({ q: query, sort }));
     return <>
-        <section className="panel">
-            <PanelHeading title="Clientes" />
-            <label className="search"><Search size={19} /><input type="search" aria-label="Buscar cliente" placeholder="Buscar por nome ou telefone" value={query} onChange={e => setQuery(e.target.value)} /></label>
-            <ResourceError resource={resource} />
-            {!resource.data && !resource.error && <Loading />}
-            {resource.data && !visible.length && <Empty>{search ? 'Nenhum cliente encontrado para esta busca.' : 'Nenhum cliente registrado.'}</Empty>}
-            {visible.map(customer => <div key={customer.id} className="product">
-                <div className="item-identity"><span className="avatar">{customer.name.charAt(0).toUpperCase()}</span><div><strong>{customer.name}</strong><small>{customer.phone} · {customer.orders} pedidos</small></div></div>
-                <button className="secondary small" onClick={() => action(async () => { setSelection({ customer, orders: await api(`/customers/${customer.id}/orders`) }); })}>Histórico <ArrowRight size={16} /></button>
-            </div>)}
-        </section>
-        {selection && <Dialog title={`Pedidos de ${selection.customer.name}`} onClose={() => setSelection(null)}>
-            {selection.orders.length === 0 && <Empty>Nenhum pedido registrado.</Empty>}
-            {selection.orders.map(order => <div className="product" key={order.id}><div><strong>#{order.id} · {source(order)}</strong><small>{formatDate(order.created_at)}</small></div>
-                <OrderStatus status={order.status} /><strong>{money(order.total_cents)}</strong></div>)}
-        </Dialog>}
+        <PageHeading title="Clientes" description="Consulte contatos e hist?rico de pedidos." />
+        <Surface className="operation-filters">
+            <Field label="Buscar cliente" type="search" maxLength={100} placeholder="Nome ou telefone" value={query} onChange={e => setQuery(e.target.value)} />
+            <Field as="select" label="Ordenar por" value={sort} onChange={e => setSort(e.target.value)}>
+                <option value="name">Nome</option><option value="recent">?ltima compra</option><option value="repeat">Quantidade de pedidos</option>
+            </Field>
+        </Surface>
+        <Surface title="Clientes cadastrados">
+            {resource.error && <Feedback kind="error" title="Falha na consulta" onRetry={resource.load}>{resource.error}</Feedback>}
+            {!resource.data && !resource.error && <Feedback kind="loading" title="Carregando clientes..." />}
+            {resource.data?.length === 0 && <Feedback title="Nenhum cliente encontrado" />}
+            {resource.data?.map(customer =>
+                <div className="operation-line customer-row" key={customer.id}>
+                    <div><strong>{customer.name}</strong><small>{customer.phone}</small></div>
+                    <div><strong>{customer.orders} pedidos</strong><small>?ltima compra ? {formatDate(customer.last_order_at)}</small></div>
+                    <div><strong><Amount cents={customer.ordered_cents} /></strong><small>Valor acumulado dos pedidos</small></div>
+                    <Button variant="quiet" icon={ArrowRight} onClick={() => action(async () =>
+                        choose({ customer, orders: await api('/customers/' + customer.id + '/orders') }))}>Hist?rico</Button>
+                </div>)}
+        </Surface>
+        {selection && <Overlay drawer title={'Pedidos de ' + selection.customer.name} onClose={() => choose(null)}>
+            {!selection.orders.length && <Feedback title="Nenhum pedido registrado" />}
+            {selection.orders.map(row => <div className="operation-line" key={row.id}><div><strong>#{row.id} ? {source(row)}</strong>
+                <small>{formatDate(row.created_at)}</small></div><OrderTag status={row.status} /><Amount cents={row.total_cents} /></div>)}
+        </Overlay>}
     </>;
 }
 
