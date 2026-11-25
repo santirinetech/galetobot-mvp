@@ -4,14 +4,42 @@ import { Counter, Products } from './catalog-operation.jsx';
 import { AdminShell } from './admin-shell.jsx';
 import { Dashboard } from './overview.jsx';
 import { Orders } from './orders-pilot.jsx';
-import { Feedback } from './design-system.jsx';
+import { Button, Feedback, Field, PageHeading, Wordmark } from './design-system.jsx';
+import { Moon, Sun } from 'lucide-react';
 import { api } from './client.js';
 import { Customers, Settings, Stock } from './admin-sections.jsx';
 import { PublicMenu } from './public-menu.jsx';
 import { Chat } from './chat.jsx';
 import { emptyPayment, paymentPayload } from './payment-fields.jsx';
-import { Brand, Loading, Notice } from './ui.jsx';
+import { Notice } from './ui.jsx';
 import './style.css';
+import './experiences.css';
+
+function Login({ logged, login, email, setEmail, password, setPassword, busy, error, connectionError, checkSession }) {
+    const [theme, setTheme] = useState(() => localStorage.getItem('galeto-theme') === 'dark' ? 'dark' : 'light');
+    return <main className="ops-shell brasa-login" data-theme={theme}>
+        <section className="brasa-login-brand"><Wordmark /><p>Gestão de pedidos, catálogo e estoque.</p></section>
+        <section className="brasa-login-content">
+            <Button variant="icon" icon={theme === 'dark' ? Sun : Moon}
+                aria-label={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'} onClick={() => {
+                    const next = theme === 'dark' ? 'light' : 'dark';
+                    localStorage.setItem('galeto-theme', next);
+                    setTheme(next);
+                }} />
+            {logged === null ? (connectionError ?
+                <Feedback kind="error" title="Falha ao verificar a sessão" onRetry={checkSession}>{connectionError}</Feedback> :
+                <Feedback kind="loading" title="Verificando sessão…" />) :
+                <form onSubmit={login}>
+                    <PageHeading title="Entrar no painel" />
+                    <Field label="E-mail" value={email} onChange={e => setEmail(e.target.value)} type="email" autoComplete="username" required />
+                    <Field label="Senha" value={password} onChange={e => setPassword(e.target.value)} type="password" autoComplete="current-password" required />
+                    {error && <Feedback kind="error" title="Acesso indisponível">{error}</Feedback>}
+                    <Button variant="primary" type="submit" disabled={busy}>{busy ? 'Entrando…' : 'Entrar'}</Button>
+                    <a href="/cardapio">Abrir cardápio público</a>
+                </form>}
+        </section>
+    </main>;
+}
 
 function App() {
     const [logged, setLogged] = useState(null);
@@ -127,22 +155,7 @@ function App() {
         }, 'Pedido registrado com sucesso.');
     }
 
-    if (logged === null) return <main className="login"><section className="panel">
-        <Brand />
-        {connectionError ? <Notice onRetry={checkSession}>{connectionError}</Notice> : <Loading>Verificando sessão…</Loading>}
-    </section></main>;
-    if (!logged) return <main className="login">
-        <form onSubmit={login} className="panel">
-            <Brand />
-            <h1>Entrar no painel</h1>
-            <p>Gerencie pedidos, catálogo e estoque em um só lugar.</p>
-            <label>E-mail<input value={email} onChange={e => setEmail(e.target.value)} type="email" autoComplete="username" required /></label>
-            <label>Senha<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required /></label>
-            <button disabled={busy}>{busy ? 'Entrando…' : 'Entrar'}</button>
-            {error && <Notice>{error}</Notice>}
-            <a href="/cardapio">Abrir cardápio público</a>
-        </form>
-    </main>;
+    if (!logged) return <Login {...{ logged, login, email, setEmail, password, setPassword, busy, error, connectionError, checkSession }} />;
 
     function navigate(id) {
         setError('');
@@ -165,7 +178,7 @@ function App() {
                 setTab('dashboard');
         });
     }
-    const pilot = ['dashboard', 'pedidos', 'produtos', 'novo', 'estoque', 'clientes', 'settings'].includes(tab);
+    const pilot = true;
     return <AdminShell {...{ tab, navigate, logout, storeName, busy, pilot }}>
             {syncError && (pilot
                 ? <Feedback kind="error" title="Falha ao carregar a operação" onRetry={refresh}>{syncError}</Feedback>
@@ -181,7 +194,7 @@ function App() {
             {tab === 'clientes' && <Customers action={action} />}
             {tab === 'settings' && <Settings {...{ action, busy, refresh }} />}
             {tab === 'novo' && <Counter {...{ products, cart, name, setName, phone, setPhone, methods, payment, setPayment, busy, order }} change={quantity} />}
-            {tab === 'ia' && <Chat lab />}
+            {tab === 'ia' && <><PageHeading title={'Laboratório IA'} description={'Ambiente de demonstração para testar o atendimento.'} /><Chat lab /></>}
     </AdminShell>;
 }
 

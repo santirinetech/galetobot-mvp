@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { MessageCircle, Plus, Send } from 'lucide-react';
 import { api, money } from './client.js';
 import { Loading, Notice } from './ui.jsx';
@@ -101,6 +101,7 @@ export function Chat({ lab = false, onContinue }) {
             }
         });
     }
+    const [detailsOpen, setDetailsOpen] = useState(false);
     const cart = view?.cart;
     const latest = view?.turns.at(-1);
     const visibleOutbound = outbound && !view?.turns.some(turn => turn.message_id === outbound.message_id);
@@ -160,7 +161,9 @@ export function Chat({ lab = false, onContinue }) {
                 </button>
             </form>
         </div>
-        <aside className="chat-details" aria-label="Informações da conversa">
+        <aside className="chat-details" aria-label="Informações da conversa" data-expanded={detailsOpen}>
+            <button type="button" className="secondary chat-side-toggle" aria-expanded={detailsOpen}
+                onClick={() => setDetailsOpen(open => !open)}>{lab ? 'Carrinho e diagnóstico' : 'Carrinho da conversa'}{cart?.items.length ? ' · ' + cart.items.length : ''}</button>
             {lab && <div className="chat-tabs">
                 <button type="button" aria-pressed={tab === 'cart'} onClick={() => setTab('cart')}>Carrinho</button>
                 <button type="button" aria-pressed={tab === 'diagnostic'} onClick={() => setTab('diagnostic')}>Diagnóstico</button>
