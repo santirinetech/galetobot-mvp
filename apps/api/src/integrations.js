@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 import { interpretationSchema } from './commercial.js';
 import { ChatError } from './chat-service.js';
+import { isProbe, probeReply } from './whatsapp-automation.js';
 
 function webCallback(chat, body, method, res, next) {
     if (!chat) return res.status(404).json({ error: 'Canal indisponível.' });
@@ -34,11 +35,15 @@ const messageSchema = z.object({
 });
 const commercialMessage = messageSchema.extend({ interpretacao: interpretationSchema.optional() });
 
-export function conversationHandler(conversations, chat) {
+export function conversationHandler(conversations, chat, automation) {
     return (req, res, next) => {
         const parsed = commercialMessage.safeParse(req.body);
         if (!parsed.success) return res.status(400).json({ error: 'Mensagem de conversa inválida' });
         if (parsed.data.session_id.startsWith('web:')) return webCallback(chat, parsed.data, 'process', res, next);
+        if (parsed.data.session_id.startsWith('wa-probe:')) {
+            return isProbe(parsed.data) ? res.json({ resposta: probeReply }) : res.sendStatus(400);
+        }
+        if (automation && !automation.get().enabled) return res.json({ resposta: '', suprimir_resposta: true });
         if (parsed.data.interpretacao && !conversations.prepareMessage) {
             return res.status(503).json({ error: 'Atendimento comercial indisponível neste modo' });
         }
@@ -46,11 +51,15 @@ export function conversationHandler(conversations, chat) {
     };
 }
 
-export function contextHandler(conversations, chat) {
+export function contextHandler(conversations, chat, automation) {
     return (req, res, next) => {
         const parsed = messageSchema.safeParse(req.body);
         if (!parsed.success) return res.status(400).json({ error: 'Mensagem de conversa inválida' });
         if (parsed.data.session_id.startsWith('web:')) return webCallback(chat, parsed.data, 'context', res, next);
+        if (parsed.data.session_id.startsWith('wa-probe:')) {
+            return isProbe(parsed.data) ? res.json({ use_model: false }) : res.sendStatus(400);
+        }
+        if (automation && !automation.get().enabled) return res.json({ use_model: false, suppress: true });
         if (!conversations.prepareMessage) return res.status(503).json({ error: 'Atendimento comercial indisponível neste modo' });
         return res.json(conversations.prepareMessage(parsed.data));
     };

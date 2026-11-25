@@ -187,3 +187,34 @@ test('conventional checkout and counter share cash validation while Pix stays pe
     assert.equal(site.count('orders'), 3);
     assert.equal(site.count('stock_movements'), 3);
 });
+
+test('global WhatsApp pause persists independently of individual handoff and public chat', { timeout: 15000 }, async t => {
+    const site = await instance(t, 'demo');
+    const admin = (await site.request('/login', { email, password })).cookie;
+    const patch = async (enabled, cookie = admin, requestOrigin = origin) => fetch(site.base + '/api/admin/whatsapp/automation', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', Origin: requestOrigin, Cookie: cookie },
+        body: JSON.stringify({ enabled })
+    });
+    const send = (mensagem, session_id = 'fixture@lid', message_id = randomUUID()) => fetch(site.base + '/api/integrations/conversation', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-integration-token': integration },
+        body: JSON.stringify({ session_id, message_id, mensagem })
+    });
+    assert.equal((await patch(false, 'bad')).status, 401);
+    assert.equal((await patch(false, admin, 'https://wrong.example')).status, 403);
+    assert.match((await (await send('atendente')).json()).resposta, /pausado/);
+    assert.deepEqual(await (await patch(false)).json(), { enabled: false, revision: 1 });
+    assert.equal(site.count('whatsapp_automation'), 1);
+    const muted = { resposta: '', suprimir_resposta: true };
+    assert.deepEqual(await (await send('cardápio', 'other@lid')).json(), muted);
+    const web = (await site.request('/chat/sessions', {})).cookie;
+    const webMessage = await site.request('/chat/messages', { mensagem: 'Quero galeto', message_id: randomUUID() }, web);
+    assert.equal(webMessage.status, 200);
+    assert.equal(webMessage.body.cart.items.length, 1);
+    assert.deepEqual(await (await patch(true)).json(), { enabled: true, revision: 2 });
+    assert.deepEqual(await (await send('cardápio')).json(), muted);
+    assert.match((await (await send('cardápio', 'other@lid')).json()).resposta, /Galeto/);
+    const probeId = '0123456789abcdef';
+    const probe = await send('diagnostico de conexao galetobot', 'wa-probe:' + probeId, probeId);
+    assert.match((await probe.json()).resposta, /Nenhum pedido foi criado/);
+    assert.equal(site.count('orders'), 0);
+});

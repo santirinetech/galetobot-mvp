@@ -9,6 +9,7 @@ import { createConversationService, CART_CLEANUP_INTERVAL_MS } from './conversat
 import { createChatService } from './chat-service.js';
 import { createChatRouters, readChatConfig } from './chat-http.js';
 import { controlToken, controlUrl, createWhatsAppAdmin } from './whatsapp-control.js';
+import { automationStatus, createWhatsAppAutomation } from './whatsapp-automation.js';
 import { integrationAuth, conversationHandler, contextHandler, resumeHandler } from './integrations.js';
 import { counterPaymentSchema, createStoreCheckout, createStoreRouter, productFields } from './store.js';
 import cookieParser from 'cookie-parser';
@@ -56,6 +57,8 @@ const { createOrder } = orders;
 const checkout = enableStore ? createStoreCheckout(db, orders) : null;
 const conversations = createConversationService(db, orders, { checkout });
 const store = checkout ? createStoreRouter(db, orders, checkout, auth, csrf) : null;
+const whatsappAutomation = enableStore ? createWhatsAppAutomation(db) : null;
+const whatsappControlToken = controlToken(process.env);
 let chatConfig = { mode: 'off' };
 if (checkout) {
     try {
@@ -156,8 +159,10 @@ app.post('/api/simulate', auth, csrf, (req, res) => {
 });
 // Endpoint de integração preparado; não habilita WhatsApp real. Requer segredo separado.
 app.post('/api/integrations/order', integrationAuth, orderHandler);
-app.post('/api/integrations/conversation', integrationAuth, conversationHandler(conversations, chat));
-app.post('/api/integrations/conversation/context', integrationAuth, contextHandler(conversations, chat));
+app.post('/api/integrations/conversation', integrationAuth, conversationHandler(conversations, chat, whatsappAutomation));
+app.post('/api/integrations/conversation/context', integrationAuth, contextHandler(conversations, chat, whatsappAutomation));
+if (whatsappAutomation) app.get('/api/integrations/whatsapp-control/automation',
+    automationStatus(whatsappAutomation, whatsappControlToken));
 if (chatRouters) app.use('/api/integrations/ai-lab', chatRouters.internal);
 if (chatRouters) app.use('/api/chat', chatRouters.publicChat);
 if (chatRouters) app.use('/api/admin/ai-lab', chatRouters.lab);
@@ -172,7 +177,8 @@ if (mode === 'hosted') {
 }
 if (enableStore) {
     app.use('/api/admin/whatsapp', createWhatsAppAdmin({
-        auth, csrf, url: controlUrl(process.env.WHATSAPP_CONTROL_URL), token: controlToken(process.env)
+        auth, csrf, url: controlUrl(process.env.WHATSAPP_CONTROL_URL), token: whatsappControlToken,
+        automation: whatsappAutomation
     }));
     app.get('/api/conversation-handoffs', auth, (_req, res) => res.json(conversations.listHandoffs()));
     app.post('/api/conversation-handoffs/resume', auth, csrf, resumeHandler(conversations));

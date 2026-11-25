@@ -87,7 +87,7 @@ export function createSupervisor({ open, processMessages, log, fail, reasons,
                 emit('messages_upsert', { type: type === 'notify' || type === 'append' ? type : 'other', count: messages.length });
                 if (type !== 'notify') return;
                 void Promise.resolve().then(() => processMessages(context.socket, messages, {
-                    active, signal: context.abort.signal, emit
+                    active, signal: context.abort.signal, emit: (event, fields) => { if (active()) emit(event, fields); }
                 })).catch(() => { if (active()) emit('message_handler_failed'); });
             });
             track(ev, 'messages.update', updates => {

@@ -16,6 +16,11 @@ export function initializeStoreSchema(db) {
     }
     db.exec(`
         CREATE TABLE IF NOT EXISTS store_settings (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS whatsapp_automation (
+            id INTEGER PRIMARY KEY CHECK(id=1),
+            enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+            revision INTEGER NOT NULL DEFAULT 0
+        );
         CREATE TABLE IF NOT EXISTS chat_sessions (
             id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, scope TEXT NOT NULL CHECK(scope IN ('web','lab')),
             owner TEXT, expires_at INTEGER NOT NULL

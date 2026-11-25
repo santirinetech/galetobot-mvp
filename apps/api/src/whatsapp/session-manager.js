@@ -12,18 +12,18 @@ function maskedAccount(jid) {
 }
 
 export function createSessionManager({ vault, makeSupervisor, log = () => {}, renderQr = qrImage,
-    observe = () => {}, now = Date.now, clock = globalThis }) {
+    probe, n8nConfigured = false, now = Date.now, clock = globalThis }) {
     let selected, supervisor, pairing, operation, shuttingDown = false, storageReady = false;
     let phase = 'disconnected', socket = 'closed', sync = 'unknown', retries = 0, account = null;
     let openAt = null, signalFailure = false, unhealthySync = false;
     const events = [];
+    const timestamps = { last_inbound: null, last_reply: null, last_n8n_ok: null, last_n8n_failure: null };
 
     function record(event, fields = {}) {
         if (historyEvents.has(event)) {
             events.unshift({ event, at: now(), generation: fields.generation, code: fields.code });
             if (events.length > 30) events.pop();
         }
-        observe(event, fields);
         log(event, fields);
     }
 
@@ -37,7 +37,8 @@ export function createSessionManager({ vault, makeSupervisor, log = () => {}, re
             state: qr ? 'qr' : phase === 'qr' ? 'awaiting_auth' :
                 (socket === 'open' && (unhealthySync || signalFailure) ? 'degraded' : phase),
             socket, sync, account, retries, pairing: Boolean(pairing), qr,
-            has_session: Boolean(selected), operation: operation?.name ?? null, events: [...events]
+            has_session: Boolean(selected), operation: operation?.name ?? null, events: [...events],
+            ...timestamps, n8n_configured: n8nConfigured, probe: probe?.state() ?? null
         };
     }
 
@@ -98,7 +99,15 @@ export function createSessionManager({ vault, makeSupervisor, log = () => {}, re
             }
         }
         if (event === 'decrypt_failure' || event === 'login_initialization_failed') signalFailure = true;
-        if (event === 'inbound_message') signalFailure = false;
+        if (event === 'inbound_message') {
+            signalFailure = false;
+            timestamps.last_inbound = now();
+        }
+        if (event === 'reply_sent') timestamps.last_reply = now();
+        if (event === 'webhook_ok') timestamps.last_n8n_ok = now();
+        if (event === 'webhook_failed' || (event === 'message_failed' && fields.stage === 'webhook')) {
+            timestamps.last_n8n_failure = now();
+        }
         if (event === 'reconnect_scheduled') {
             retries = fields.attempt;
             phase = 'reconnecting';
@@ -114,7 +123,8 @@ export function createSessionManager({ vault, makeSupervisor, log = () => {}, re
 
     async function open(directory, allowPairing) {
         if (shuttingDown) return;
-        supervisor = makeSupervisor({ directory, allowPairing, onPairing, log: onSocketEvent });
+        supervisor = makeSupervisor({ directory, allowPairing, onPairing, log: onSocketEvent,
+            messagesAllowed: () => !shuttingDown && !pairing && selected === directory });
         retries = 0;
         await supervisor.start();
     }
@@ -148,6 +158,10 @@ export function createSessionManager({ vault, makeSupervisor, log = () => {}, re
     async function run(action) {
         if (!storageReady) throw new ControlError('storage_failure');
         switch (action.action) {
+        case 'probe':
+            if (!probe || pairing || socket !== 'open') throw new ControlError('not_connected');
+            probe.start(action.phone);
+            return;
         case 'pair': {
             if (pairing) throw new ControlError('busy');
             if (selected && !action.replace) throw new ControlError('replacement_required');

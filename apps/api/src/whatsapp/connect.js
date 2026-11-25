@@ -5,10 +5,11 @@ import express from 'express';
 import makeWASocket, {
     DEFAULT_CONNECTION_CONFIG, DisconnectReason, S_WHATSAPP_NET, useMultiFileAuthState
 } from '@whiskeysockets/baileys';
-import { controlToken, createWhatsAppControl } from '../whatsapp-control.js';
+import { controlToken, controlUrl, createWhatsAppControl } from '../whatsapp-control.js';
 import { createBaileysLogger } from './diagnostics.js';
 import { createMessageHandler } from './messages.js';
 import { qrLifetime } from './pairing-qr.js';
+import { createWhatsAppProbe } from './operational-probe.js';
 import { createSessionManager } from './session-manager.js';
 import { createSessionVault } from './session-vault.js';
 import { createSupervisor } from './supervisor.js';
@@ -22,6 +23,7 @@ const protocol = process.env.WHATSAPP_PROTOCOL_MODE ?? 'bundled';
 const diagnostics = process.env.WHATSAPP_DIAGNOSTICS ?? 'basic';
 const session = process.env.WHATSAPP_SESSION_PATH ?? './whatsapp-session';
 const management = controlToken(process.env);
+const apiUrl = controlUrl(process.env.WHATSAPP_API_URL);
 const managementPort = Number(process.env.WHATSAPP_CONTROL_PORT ?? 3002);
 if (process.env.WHATSAPP_CONTROL_TOKEN && !management) throw new Error('Credencial de controle invalida.');
 
@@ -45,14 +47,14 @@ function log(event, fields) {
     console.log(JSON.stringify({ component: 'whatsapp', event, ...fields }));
 }
 
-const processMessages = createMessageHandler(async ({ jid, id, text, signal, emit }) => {
+async function postWebhook(payload, signal, emit) {
     if (!target) throw new Error('Webhook indisponivel.');
     emit('webhook_request');
     const response = await fetch(target, {
         method: 'POST',
         redirect: 'manual',
         headers: { 'Content-Type': 'application/json', 'X-GaletoBot-Token': token },
-        body: JSON.stringify({ session_id: jid, mensagem: text, message_id: id }),
+        body: JSON.stringify(payload),
         signal: AbortSignal.any([signal, AbortSignal.timeout(15000)])
     });
     emit('webhook_response', { status: response.status });
@@ -60,15 +62,48 @@ const processMessages = createMessageHandler(async ({ jid, id, text, signal, emi
         await response.body?.cancel().catch(() => {});
         throw new Error('Webhook rejeitado.');
     }
-    const data = await response.json();
-    if (data?.suprimir_resposta === true && data.resposta === '') return null;
-    if (typeof data?.resposta !== 'string' || !data.resposta.trim()) throw new Error('Resposta invalida.');
-    return data.resposta;
+    return response.json();
+}
+
+async function checkAutomation(signal) {
+    if (!apiUrl) return null;
+    try {
+        const result = await fetch(new URL('/api/integrations/whatsapp-control/automation', apiUrl), {
+            headers: { 'X-Galeto-WA-Token': management }, redirect: 'error',
+            signal: AbortSignal.any([signal, AbortSignal.timeout(2000)])
+        });
+        if (!result.ok) return null;
+        const value = await result.json();
+        return typeof value.enabled === 'boolean' && Number.isSafeInteger(value.revision) ? value : null;
+    } catch { return null; }
+}
+
+const probe = createWhatsAppProbe({ post: postWebhook });
+const processMessages = createMessageHandler(async ({ jid, id, text, signal, emit }) => {
+    try {
+        const data = await postWebhook({ session_id: jid, mensagem: text, message_id: id }, signal, emit);
+        if (data?.suprimir_resposta === true && data.resposta === '') {
+            emit('webhook_ok');
+            return null;
+        }
+        if (typeof data?.resposta !== 'string' || !data.resposta.trim()) throw new Error('Resposta invalida.');
+        emit('webhook_ok');
+        return data.resposta;
+    } catch (error) {
+        emit('webhook_failed');
+        throw error;
+    }
+}, {
+    checkAutomation: management ? checkAutomation : undefined,
+    handleProbe: management ? probe.handle : undefined
 });
 
-function makeSupervisor({ directory, allowPairing = false, onPairing, log: record = log }) {
+function makeSupervisor({ directory, allowPairing = false, onPairing, log: record = log, messagesAllowed = () => true }) {
     return createSupervisor({
-    log: record, reasons: DisconnectReason, onPairing, processMessages,
+    log: record, reasons: DisconnectReason, onPairing,
+    processMessages: (socket, messages, context) => {
+        if (messagesAllowed()) return processMessages(socket, messages, context);
+    },
     connectMs: allowPairing ? 300_000 : undefined,
     fail: () => { if (!management) process.exitCode = 1; },
     async open({ persist, emit, signal }) {
@@ -143,7 +178,9 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
     process.on(signal, () => { void shutdown?.().catch(() => { process.exitCode = 1; }); });
 }
 if (management) {
-    const manager = createSessionManager({ vault: createSessionVault(session), makeSupervisor, log });
+    const manager = createSessionManager({
+        vault: createSessionVault(session), makeSupervisor, log, probe, n8nConfigured: Boolean(target)
+    });
     const app = express();
     app.disable('x-powered-by');
     app.use(createWhatsAppControl(manager, management));

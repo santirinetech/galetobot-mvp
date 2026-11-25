@@ -25,7 +25,7 @@
   ).trim();
 }
 
-export function createMessageHandler(requestReply) {
+export function createMessageHandler(requestReply, { checkAutomation, handleProbe } = {}) {
     const pending = new Set();
     const handled = new Set();
 
@@ -39,6 +39,12 @@ export function createMessageHandler(requestReply) {
                 emit('message_ignored', { reason: 'no_text' });
                 continue;
             }
+            emit('inbound_message');
+            if (handleProbe && await handleProbe({ jid, remoteJidAlt, text, signal, emit, send: async reply => {
+                if (!active()) return false;
+                await socket.sendMessage(jid, { text: reply });
+                return true;
+            } })) continue;
             const ids = id ? [jid, remoteJidAlt].filter(Boolean).map(address => JSON.stringify([address, id])) : [];
             if (ids.some(key => pending.has(key) || handled.has(key))) {
                 emit('message_ignored', { reason: 'duplicate' });
@@ -48,9 +54,15 @@ export function createMessageHandler(requestReply) {
             for (const key of ids) pending.add(key);
             let sending = false;
             try {
+                const policy = checkAutomation ? await checkAutomation(signal) : { enabled: true };
+                if (!policy?.enabled || !active()) {
+                    for (const key of ids) handled.add(key);
+                    continue;
+                }
                 const reply = await requestReply({ jid, id, text, signal, emit });
                 if (!active()) continue;
-                if (reply !== null) {
+                const currentPolicy = reply !== null && checkAutomation ? await checkAutomation(signal) : policy;
+                if (reply !== null && currentPolicy?.enabled && currentPolicy.revision === policy.revision && active()) {
                     sending = true;
                     await socket.sendMessage(jid, { text: reply });
                     if (active()) emit('reply_sent');

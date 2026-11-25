@@ -111,7 +111,9 @@ export function createWhatsAppControl(manager, token) {
     return router;
 }
 
-export function createWhatsAppAdmin({ auth, csrf, url, token, fetcher = fetch }) {
+const automationBody = z.strictObject({ enabled: z.boolean() });
+
+export function createWhatsAppAdmin({ auth, csrf, url, token, automation, fetcher = fetch }) {
     const router = Router();
     router.use(noStore, auth);
 
@@ -135,12 +137,19 @@ export function createWhatsAppAdmin({ auth, csrf, url, token, fetcher = fetch })
     }
 
     router.get('/state', async (_req, res) => {
-        try { res.json(await call('/state')); }
-        catch { res.json({ state: 'unavailable' }); }
+        let remote;
+        try { remote = await call('/state'); }
+        catch { remote = { state: 'unavailable' }; }
+        res.json({ ...remote, ...(automation && { automation: automation.get() }) });
     });
     router.post('/actions', csrf, actionLimit(), async (req, res) => {
         try { res.json(await call('/actions', parseAction(req.body))); }
         catch (error) { respondError(res, error); }
+    });
+    if (automation) router.patch('/automation', csrf, actionLimit(), (req, res) => {
+        const parsed = automationBody.safeParse(req.body);
+        if (!parsed.success) return respondError(res, new ControlError('invalid_action'));
+        return res.json(automation.set(parsed.data.enabled, req.userId));
     });
     return router;
 }
