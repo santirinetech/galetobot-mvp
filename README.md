@@ -1,42 +1,113 @@
-# GaletoBot MVP — entrega 24/11
-Projeto **novo e isolado**, inspirado no Galeto Master. NÃO substitui produção.
+# GaletoBot
 
-## Requisitos
-Node.js 20+ e npm, Windows/Linux/macOS. `better-sqlite3` pode precisar de ferramentas de compilação se não houver binário para sua versão do Node.
+GaletoBot é um projeto independente do Galeto Master, desenvolvido para o desafio KODIE de Inteligência Artificial e Automação. A FAQ original evoluiu para um assistente de pedidos de restaurante pelo WhatsApp. O cliente consulta o cardápio, monta o pedido e recebe a confirmação pelo celular. A equipe acompanha pedidos e estoque no painel.
 
-## Instalação (VS Code)
-```bash
-npm install
-cp .env.example .env
+## Problema e solução
+
+Responder perguntas de preço, disponibilidade e entrega manualmente toma tempo e pode gerar pedidos inconsistentes com o estoque. O GaletoBot interpreta a conversa, consulta dados vigentes e exige confirmação explícita. A API mantém preços, frete e baixa de estoque no backend.
+
+- **Cliente:** cardápio público, consulta de estoque, carrinho, entrega por região, seleção de pagamento e resumo.
+- **Operação:** painel autenticado, pedidos, produtos, estoque baixo, configurações e histórico de movimentações.
+- **WhatsApp:** Baileys recebe e envia mensagens. O n8n coordena o fluxo e aciona o Gemini quando a API pede interpretação.
+
+## Arquitetura e atendimento
+
+```mermaid
+flowchart LR
+    W[WhatsApp] <--> B[Baileys]
+    B <--> N[n8n existente]
+    N <--> G[Google Gemini]
+    N <-->|Rotas privadas autenticadas| A[Express]
+    A <--> D[(SQLite)]
+    U[Cardápio e painel] <-->|HTTPS| T[Cloudflare Tunnel]
+    T <--> P[Nginx]
+    P <-->|API na mesma origem| A
 ```
-No PowerShell, use `Copy-Item .env.example .env` em vez de `cp` se preferir. Edite `.env`: troque `ADMIN_PASSWORD` por senha forte e `WEBHOOK_TOKEN` por segredo aleatório. Use `ADMIN_EMAIL` para o login.
 
-## Executar
-```bash
-npm run dev
+O frontend React é compilado pelo Vite. Na hospedagem, Nginx serve o build e encaminha as rotas do navegador ao Express. O SQLite persiste catálogo, estoque, configurações, clientes, pedidos e carrinhos. A confirmação registra o pedido e atualiza estoque na mesma transação.
+
+O Baileys envia ao webhook a mensagem original e seus identificadores. A API de contexto informa catálogo e dados faltantes. O prompt do Gemini pede ações JSON estruturadas e inclui exemplos de múltiplos itens, entrega, Pix e respostas curtas. O JavaScript do n8n normaliza os campos. A API valida as ações, consulta preços e frete do cadastro e devolve o campo `resposta`. O resumo inclui o código que o cliente deve enviar para confirmar.
+
+| Interface | Contrato |
+| --- | --- |
+| Baileys → n8n | `POST` no webhook com `X-GaletoBot-Token` |
+| n8n → API | `POST /api/integrations/conversation/context` e `POST /api/integrations/conversation` com `x-integration-token` |
+| Navegador → API | Sessão administrativa em cookie HttpOnly, SameSite e Secure na hospedagem. Escritas administrativas verificam a origem. |
+
+O workflow publicado tem sufixos nos nomes dos nós e alterações manuais no prompt. Sua cópia sanitizada depende do export real. [Export de referência](docs/n8n/galetobot-kodie-gemini-ia.json) · [Roteiro do workflow publicado](docs/kodie/roteiro-n8n.md)
+
+## Estrutura
+
+| Caminho | Conteúdo |
+| --- | --- |
+| `apps/api/` | Node.js, Express, SQLite, Baileys, regras comerciais e testes |
+| `apps/web/` | Cardápio e painel React/Vite |
+| `deploy/`, `scripts/deploy/` | Proxy, inicialização isolada e snapshots |
+| `docs/n8n/` | Export de referência e contrato |
+| `docs/kodie/`, `docs/evidencias/` | Entrega e índice de evidências |
+
+## Instalação local
+
+Use Node.js 24 ou ambiente compatível com o lockfile. Na raiz, no PowerShell:
+
+```powershell
+npm.cmd ci
+if (!(Test-Path .env.development)) { Copy-Item .env.example .env.development }
 ```
-Acesse **http://localhost:5173** no computador. A API usa a porta `3000` por padrão. Quando `HOST` estiver ausente, o bind continua em `0.0.0.0` para permitir acesso pelo n8n a partir da rede local. Nesse cenário, o n8n deve usar o IP LAN da máquina da API e a porta configurada em `PORT`. Restrinja a porta no firewall à rede ou às máquinas autorizadas. Para uso apenas no computador da API, configure `HOST=127.0.0.1`. Mantenha `APP_ORIGIN` igual à origem do painel. O acesso pelo celular físico requer disponibilizar o painel na rede local de teste. Mantenha ambas as portas fora da internet.
 
-## Banco SQLite
+Edite `.env.development` com administrador de teste, senha de pelo menos 12 caracteres e token próprio. Defina `DATABASE_ALLOW_CREATE=1` só para criar uma base descartável e retire a opção depois. O padrão é `apps/api/data/demo/galeto-demo.db`. `DEMO_DATABASE_PATH` permite escolher outro arquivo dentro do diretório de demonstração. Para uso no computador, configure `HOST=127.0.0.1` e `APP_ORIGIN=http://localhost:5173`.
 
-Sem `DATABASE_PATH`, a API procura `apps/api/data/galeto-dev.db` e `apps/api/apps/api/data/galeto-dev.db` a partir da raiz do repositório. Se apenas um existir, usa esse arquivo. Se os dois existirem, a inicialização para e pede uma escolha explícita. O backup em `backups-local/` fica fora da busca.
+```powershell
+npm.cmd run dev
+npm.cmd test -w apps/api
+npm.cmd run build
+git diff --check
+```
 
-`DATABASE_PATH` aceita um caminho absoluto ou relativo à raiz do repositório e tem prioridade sobre a busca. Por padrão a API exige que o banco exista. Para criar um banco em desenvolvimento ou teste, use `DATABASE_ALLOW_CREATE=1` somente na primeira inicialização. Informe `DATABASE_PATH` para escolher o destino. Sem essa variável e sem candidatos existentes, o destino é `apps/api/data/galeto-dev.db`. Em `NODE_ENV=production`, a API só abre bancos existentes.
+Os testes usam SQLite temporário. Para abrir o painel no celular em rede privada, ajuste `GALETO_WEB_HOST=0.0.0.0` e use a origem LAN do painel em `APP_ORIGIN`.
 
-Para validar no PowerShell a partir da raiz do repositório, execute `npm.cmd test -w apps/api`. Os testes criam e removem bancos em diretórios temporários e podem ser executados com a API operacional em funcionamento.
+## Hospedagem
 
-## Roteiro de demonstração
-1. Faça login.
-2. Veja estoque inicial (Galeto 10, Tropeiro 5, Arroz 8, Salpicão 2).
-3. Crie pedido presencial com nome e telefone fictícios.
-4. Observe baixa do estoque e pedido no painel.
-5. Vá a Atendimento IA, informe o mesmo telefone e envie `quero o de sempre`.
-6. O simulador mostra o último pedido e confere estoque; confirme o pedido simulado.
-7. Reduza estoque pelo painel e repita a simulação para demonstrar aviso de falta.
+A proposta usa Debian 13 num LXC dedicado, Docker Compose, Express e o build React servido pelo Nginx. O Cloudflare Tunnel publica uma única origem HTTPS. O n8n atual acessa as rotas privadas por uma porta LAN com origem restrita. O adaptador WhatsApp fica em perfil optativo. A API hospedada exige banco existente e mantém o catálogo e o checkout ativos.
 
-## Limites honestos
-- A aba “IA” é um **simulador local determinístico**, sem Gemini e sem WhatsApp real.
-- O endpoint de integração é um ponto de entrada protegido, mas não há workflow n8n importável pronto nesta versão.
-- Não há suporte a impressão térmica, PWA instalável/offline ou deploy em produção.
-- Não use dados reais de clientes na apresentação.
-- O login é provisionado na primeira inicialização. Alterar `ADMIN_PASSWORD` depois não altera a senha já gravada. Para começar uma demonstração com dados iniciais, selecione um arquivo descartável com `DATABASE_PATH` e habilite a criação conforme a seção Banco SQLite.
+| Variáveis | Finalidade |
+| --- | --- |
+| `APP_ORIGIN` | Origem HTTPS exata |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Administrador de bootstrap. Contas existentes conservam a senha. |
+| `WEBHOOK_TOKEN` | Autenticação do n8n na API |
+| `LAN_BIND_IP`, `N8N_SOURCE_IP` | IP do LXC e origem permitida do n8n |
+| `DATABASE_DIR`, `DATABASE_FILENAME` | Diretório persistente e arquivo existente |
+| `RELEASE`, `PUBLIC_LOOPBACK_PORT`, `INTEGRATION_PORT` | Tag das imagens e portas |
+| `N8N_WEBHOOK_URL`, `N8N_WEBHOOK_TOKEN`, `WHATSAPP_SESSION_DIR` | Destino, credencial e sessão do perfil WhatsApp |
+
+O Compose fornece `NODE_ENV=production`, `HOST=0.0.0.0`, `PORT=3000` e `DATABASE_PATH` à API. A chave Gemini permanece na credencial do n8n. Use `.env.production.example` como modelo. Depois de preencher o ambiente e provisionar o banco:
+
+```bash
+docker compose --env-file .env.production config --quiet
+docker compose --env-file .env.production build api web
+docker compose --env-file .env.production up -d --wait api web
+```
+
+O domínio `galetobot.santirine.com.br` é o destino pretendido e ainda será configurado. [Guia Proxmox, Docker, HTTPS, migração e rollback](docs/deploy/proxmox.md)
+
+## Pedido real de teste
+
+Na validação relatada pela equipe, o pedido **#1** entrou pelo WhatsApp e apareceu como **Pendente** no painel. O pagamento escolhido foi Pix, sem transação financeira.
+
+| Item | Valor | Estoque antes → depois |
+| --- | ---: | --- |
+| 2 galetos com farofa | R$ 110,00 | 10 → 8 |
+| 3 porções de arroz | R$ 24,00 | 8 → 5 |
+| 1 salpicão | R$ 25,00 | 2 → 1 |
+| Feijão tropeiro fora do pedido | — | 5 → 5 |
+
+Subtotal de **R$ 159,00**, frete de **R$ 2,00** para Morro do Meio, reconhecido como Presidente Médici, e total de **R$ 161,00**. A equipe registrou capturas do WhatsApp, painel, estoque, n8n e Gemini. [Entrega KODIE](docs/kodie/README.md) · [Anonimização das evidências](docs/evidencias/README.md)
+
+## Limitações e próximos passos
+
+- O painel tem uma única classe de administrador. Use uma instância isolada com dados fictícios para avaliadores.
+- A confirmação exige UUID. A confirmação natural pode ser estudada mantendo vínculo com o resumo vigente.
+- Ampliar apelidos de produtos, naturalidade das respostas e frases de cancelamento. O carrinho já aceita algumas formas de cancelamento natural.
+- Corrigir a autenticação no domínio externo do n8n. A integração validada usa a rede interna.
+- Implementar validação financeira de Pix. O fluxo atual registra a escolha da forma de pagamento.
+- Validar o deploy no LXC, configurar o domínio e publicar o workflow sanitizado após revisão.
