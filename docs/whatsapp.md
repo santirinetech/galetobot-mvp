@@ -1,4 +1,4 @@
-# Atendimento GaletoBot pelo WhatsApp
+﻿# Atendimento GaletoBot pelo WhatsApp
 
 O Baileys encaminha a conversa para um único workflow do n8n. O workflow consulta o catálogo da API Express, envia a pergunta e o catálogo ao Gemini e devolve uma resposta JSON. O Baileys envia o texto ao mesmo JID. Para a etapa de pedidos, o mesmo workflow poderá encaminhar mensagens ao serviço de conversas da API, responsável pela confirmação, pelo preço e pela baixa de estoque.
 
@@ -86,55 +86,6 @@ Com a mesma sessão, registre uma janela de base e depois envie uma mensagem de 
 
 Repita com a primeira mensagem após 1 h, 8 h, 24 h e 72 h de inatividade, sem sondas intermediárias. Registre o tempo até o evento e a resposta. Para comparar modos de protocolo, use a mesma imagem, sessão e condições, mudando apenas `WHATSAPP_PROTOCOL_MODE`. Se as versões anunciadas forem iguais, a comparação verifica a origem da configuração. Os hooks internos e rótulos de log podem mudar em versões futuras do Baileys. [Issue #2908](https://github.com/WhiskeySockets/Baileys/issues/2908)
 
-## Implantação isolada e rollback
+## Implantação e gerenciamento pelo painel
 
-Após autorização, verifique o bundle com `git bundle verify` no checkout do LXC. Busque a branch do bundle diretamente pelo caminho do arquivo e confira o hash de `FETCH_HEAD`. Com a base esperada e o checkout limpo, avance com `git merge --ff-only FETCH_HEAD`. O remoto existente pode permanecer apontando para o bundle anterior. Confirme um único escritor da sessão, incluindo outros hosts.
-
-```bash
-cd /opt/galetobot
-set -e
-compose() { docker compose --env-file .env.production --profile whatsapp "$@"; }
-compose config --quiet
-release="wa-$(git rev-parse --short=12 HEAD)"
-rollback="${release}-rollback"
-api_before=$(compose ps -q api)
-web_before=$(compose ps -q web)
-wa=$(compose ps -q whatsapp)
-test -n "$api_before"
-test -n "$web_before"
-test -n "$wa"
-if docker image inspect "galetobot-api:$release" >/dev/null 2>&1 ||
-   docker image inspect "galetobot-api:$rollback" >/dev/null 2>&1; then
-  printf '%s\n' 'Uma das tags já existe. Confira as imagens antes de continuar.' >&2
-  exit 1
-fi
-old_image=$(docker inspect --format '{{.Image}}' "$wa")
-docker image tag "$old_image" "galetobot-api:$rollback"
-```
-
-No mesmo shell, compile o alvo API sob a tag candidata e valide a versão do Baileys na imagem sem montar a sessão. Depois, recrie apenas o serviço WhatsApp e compare os IDs dos containers API e web.
-
-```bash
-RELEASE="$release" compose build api
-docker run --rm --network none "galetobot-api:$release" node -e '
-  for (const file of ["connect", "diagnostics", "messages", "supervisor"]) {
-    require("node:fs").accessSync(`/app/apps/api/src/whatsapp/${file}.js`);
-  }
-  if (require("/app/node_modules/@whiskeysockets/baileys/package.json").version !== "7.0.0-rc14") process.exit(1);
-'
-RELEASE="$release" WHATSAPP_DIAGNOSTICS=detailed WHATSAPP_PROTOCOL_MODE=bundled \
-  compose up -d --no-deps --no-build --pull never whatsapp
-test "$(compose ps -q api)" = "$api_before"
-test "$(compose ps -q web)" = "$web_before"
-compose ps api web whatsapp
-compose logs --since 10m whatsapp
-```
-
-Para rollback, use a tag preservada e o mesmo mount de sessão. Se abrir outro shell, defina novamente a função `compose` e a variável `rollback` conforme a tag criada antes do build.
-
-```bash
-RELEASE="$rollback" compose up -d --no-deps --no-build --pull never whatsapp
-compose ps api web whatsapp
-```
-
-O adaptador desta versão sempre interrompe a execução ao receber uma solicitação de pareamento. A imagem anterior usa sua própria política de QR. Para rollback e diagnóstico, preserve `WHATSAPP_ALLOW_QR=0` no ambiente do serviço.
+Use o [guia da Central WhatsApp](whatsapp-central.md) para preparar o perfil, recuperar uma sessão ou vincular uma conta nova. As instruções de diagnóstico acima continuam disponíveis para investigar o adaptador.

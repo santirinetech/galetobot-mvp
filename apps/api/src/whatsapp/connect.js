@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+﻿import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import dotenv from 'dotenv';
 import express from 'express';
@@ -100,76 +100,76 @@ const processMessages = createMessageHandler(async ({ jid, id, text, signal, emi
 
 function makeSupervisor({ directory, allowPairing = false, onPairing, log: record = log, messagesAllowed = () => true }) {
     return createSupervisor({
-    log: record, reasons: DisconnectReason, onPairing,
-    processMessages: (socket, messages, context) => {
-        if (messagesAllowed()) return processMessages(socket, messages, context);
-    },
-    connectMs: allowPairing ? 300_000 : undefined,
-    fail: () => { if (!management) process.exitCode = 1; },
-    async open({ persist, emit, signal }) {
-        // Validate before the Baileys helper, which treats an unreadable file as absent.
-        let auth;
-        try {
-            const file = await readFile(join(directory, 'creds.json'), 'utf8').catch(error => {
-                if (allowPairing && error.code === 'ENOENT') return null;
-                throw error;
-            });
-            const stored = file === null ? null : JSON.parse(file);
-            if (file !== null && !stored?.me?.id) throw new Error('Sessao invalida.');
-            auth = await useMultiFileAuthState(directory);
-            if (stored && auth.state.creds.me?.id !== stored.me.id) throw new Error('Sessao indisponivel.');
-        } catch {
-            emit('auth_load_failed');
-            throw new Error('Sessao indisponivel.');
-        }
-        const { state, saveCreds } = auth;
-        const saveCredentials = () => persist('credentials', saveCreds);
-        const setKeys = state.keys.set.bind(state.keys);
-        state.keys.set = data => persist('signal_keys', () => setKeys(data));
-
-        let version = DEFAULT_CONNECTION_CONFIG.version;
-        let source = 'bundled';
-        if (protocol === 'queried') {
+        log: record, reasons: DisconnectReason, onPairing,
+        processMessages: (socket, messages, context) => {
+            if (messagesAllowed()) return processMessages(socket, messages, context);
+        },
+        connectMs: allowPairing ? 300_000 : undefined,
+        fail: () => { if (!management) process.exitCode = 1; },
+        async open({ persist, emit, signal }) {
+            // Validate before the Baileys helper, which treats an unreadable file as absent.
+            let auth;
             try {
-                const result = await fetch('https://raw.githubusercontent.com/WhiskeySockets/Baileys/master/src/Defaults/index.ts', {
-                    signal: AbortSignal.any([signal, AbortSignal.timeout(8000)]),
-                    redirect: 'error'
+                const file = await readFile(join(directory, 'creds.json'), 'utf8').catch(error => {
+                    if (allowPairing && error.code === 'ENOENT') return null;
+                    throw error;
                 });
-                if (!result.ok) throw new Error();
-                const match = (await result.text()).match(/^const version = \[(\d{1,4}),\s*(\d{1,8}),\s*(\d{1,12})\]/m);
-                if (!match) throw new Error();
-                version = match.slice(1).map(Number);
-                source = 'queried';
+                const stored = file === null ? null : JSON.parse(file);
+                if (file !== null && !stored?.me?.id) throw new Error('Sessao invalida.');
+                auth = await useMultiFileAuthState(directory);
+                if (stored && auth.state.creds.me?.id !== stored.me.id) throw new Error('Sessao indisponivel.');
             } catch {
-                source = 'bundled_fallback';
+                emit('auth_load_failed');
+                throw new Error('Sessao indisponivel.');
             }
-        }
-        signal.throwIfAborted();
-        emit('protocol_version', { source, version: version.join('.') });
-        const logger = createBaileysLogger((event, fields) => {
-            if (!signal.aborted) emit(event, fields);
-        }, diagnostics);
-        const socket = makeWASocket({ version, auth: state, logger, qrTimeout: qrLifetime });
-        return {
-            ev: socket.ev, ws: socket.ws, saveCredentials,
-            async end() {
-                await socket.end();
-                if (socket.ws.isClosing && !socket.ws.isClosed) {
-                    await new Promise(resolve => socket.ws.once('close', resolve));
+            const { state, saveCreds } = auth;
+            const saveCredentials = () => persist('credentials', saveCreds);
+            const setKeys = state.keys.set.bind(state.keys);
+            state.keys.set = data => persist('signal_keys', () => setKeys(data));
+
+            let version = DEFAULT_CONNECTION_CONFIG.version;
+            let source = 'bundled';
+            if (protocol === 'queried') {
+                try {
+                    const result = await fetch('https://raw.githubusercontent.com/WhiskeySockets/Baileys/master/src/Defaults/index.ts', {
+                        signal: AbortSignal.any([signal, AbortSignal.timeout(8000)]),
+                        redirect: 'error'
+                    });
+                    if (!result.ok) throw new Error();
+                    const match = (await result.text()).match(/^const version = \[(\d{1,4}),\s*(\d{1,8}),\s*(\d{1,12})\]/m);
+                    if (!match) throw new Error();
+                    version = match.slice(1).map(Number);
+                    source = 'queried';
+                } catch {
+                    source = 'bundled_fallback';
                 }
-            },
-            async confirmUnlink() {
-                const jid = state.creds.me?.id;
-                if (!jid) return false;
-                const result = await socket.query({
-                    tag: 'iq', attrs: { to: S_WHATSAPP_NET, type: 'set', xmlns: 'md' },
-                    content: [{ tag: 'remove-companion-device', attrs: { jid, reason: 'user_initiated' } }]
-                }, 4000);
-                return result?.tag === 'iq' && result.attrs?.type === 'result';
-            },
-            sendMessage: (...args) => socket.sendMessage(...args)
-        };
-    }
+            }
+            signal.throwIfAborted();
+            emit('protocol_version', { source, version: version.join('.') });
+            const logger = createBaileysLogger((event, fields) => {
+                if (!signal.aborted) emit(event, fields);
+            }, diagnostics);
+            const socket = makeWASocket({ version, auth: state, logger, qrTimeout: qrLifetime });
+            return {
+                ev: socket.ev, ws: socket.ws, saveCredentials,
+                async end() {
+                    await socket.end();
+                    if (socket.ws.isClosing && !socket.ws.isClosed) {
+                        await new Promise(resolve => socket.ws.once('close', resolve));
+                    }
+                },
+                async confirmUnlink() {
+                    const jid = state.creds.me?.id;
+                    if (!jid) return false;
+                    const result = await socket.query({
+                        tag: 'iq', attrs: { to: S_WHATSAPP_NET, type: 'set', xmlns: 'md' },
+                        content: [{ tag: 'remove-companion-device', attrs: { jid, reason: 'user_initiated' } }]
+                    }, 4000);
+                    return result?.tag === 'iq' && result.attrs?.type === 'result';
+                },
+                sendMessage: (...args) => socket.sendMessage(...args)
+            };
+        }
     });
 }
 
@@ -187,7 +187,9 @@ if (management) {
     let server, stopping = false;
     shutdown = async () => { stopping = true; server?.close(); await manager.shutdown(); };
     await manager.start();
-    if (!stopping) server = app.listen(managementPort, process.env.WHATSAPP_CONTROL_HOST ?? '127.0.0.1');
+    if (!stopping) server = app.listen(managementPort, process.env.WHATSAPP_CONTROL_HOST ?? '127.0.0.1', () => {
+        log('whatsapp_control_ready', { port: server.address().port });
+    });
 } else {
     const supervisor = makeSupervisor({ directory: session });
     shutdown = supervisor.stop;

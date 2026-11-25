@@ -11,6 +11,10 @@
 !apps/api/src/whatsapp/connect.js
 !apps/api/src/whatsapp/diagnostics.js
 !apps/api/src/whatsapp/messages.js
+!apps/api/src/whatsapp/operational-probe.js
+!apps/api/src/whatsapp/pairing-qr.js
+!apps/api/src/whatsapp/session-manager.js
+!apps/api/src/whatsapp/session-vault.js
 !apps/api/src/whatsapp/supervisor.js
 !apps/web/
 !apps/web/package.json

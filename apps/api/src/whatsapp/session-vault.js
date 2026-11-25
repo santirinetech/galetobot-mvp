@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, lstat, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join, sep } from 'node:path';
 
@@ -11,6 +11,8 @@ export function createSessionVault(root) {
     async function init() {
         await mkdir(root, { recursive: true, mode: 0o700 });
         await mkdir(privateRoot, { recursive: true, mode: 0o700 });
+        if (!(await lstat(privateRoot)).isDirectory()) throw new Error('Invalid private directory');
+        if (process.platform !== 'win32') await chmod(privateRoot, 0o700);
     }
 
     async function readActive() {

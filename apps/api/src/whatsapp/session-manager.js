@@ -13,7 +13,7 @@ function maskedAccount(jid) {
 
 export function createSessionManager({ vault, makeSupervisor, log = () => {}, renderQr = qrImage,
     probe, n8nConfigured = false, now = Date.now, clock = globalThis }) {
-    let selected, supervisor, pairing, operation, shuttingDown = false, storageReady = false;
+    let selected, supervisor, pairing, operation, startup, shuttingDown = false, storageReady = false;
     let phase = 'disconnected', socket = 'closed', sync = 'unknown', retries = 0, account = null;
     let openAt = null, signalFailure = false, unhealthySync = false;
     const events = [];
@@ -196,6 +196,7 @@ export function createSessionManager({ vault, makeSupervisor, log = () => {}, re
             await restore();
             return;
         case 'unlink':
+            if (action.confirm !== true) throw new ControlError('invalid_action');
             if (pairing) throw new ControlError('busy');
             if (!selected) throw new ControlError('no_session');
             if (socket !== 'open') throw new ControlError('not_connected');
@@ -234,7 +235,7 @@ export function createSessionManager({ vault, makeSupervisor, log = () => {}, re
         } catch { record('operation_failed'); }
     }
 
-    async function start() {
+    async function initialize() {
         try {
             await vault.init();
             selected = await vault.readActive();
@@ -244,6 +245,11 @@ export function createSessionManager({ vault, makeSupervisor, log = () => {}, re
             phase = 'invalid_session';
             record('operation_failed');
         }
+    }
+
+    function start() {
+        startup ??= initialize();
+        return startup;
     }
 
     async function shutdown() {

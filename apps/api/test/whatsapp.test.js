@@ -16,7 +16,7 @@ function deferred() {
     return { promise, resolve };
 }
 
-function setup({ beforeOpen, save, requestReply, retryLimit = 2 } = {}) {
+function setup({ beforeOpen, save, requestReply, onPairing, retryLimit = 2 } = {}) {
     const sockets = [], logs = [], timeouts = new Map(), intervals = new Map();
     const counts = { active: 0, maxActive: 0, failed: 0, webhook: 0 };
     const clock = {
@@ -26,7 +26,7 @@ function setup({ beforeOpen, save, requestReply, retryLimit = 2 } = {}) {
         clearInterval(key) { intervals.delete(key); }
     };
     const supervisor = createSupervisor({
-        reasons: DisconnectReason, retryLimit, random: () => 0, clock,
+        reasons: DisconnectReason, retryLimit, random: () => 0, clock, onPairing,
         log: (event, fields) => logs.push({ event, ...fields }),
         fail: () => counts.failed++,
         async open({ persist }) {
@@ -68,6 +68,29 @@ const message = (jid, id, alt) => ({
     key: { remoteJid: jid, id, remoteJidAlt: alt }, message: { conversation: 'fixture message' }
 });
 const upsert = (socket, type, ...messages) => socket.ev.emit('messages.upsert', { type, messages });
+
+test('515 following pairing drains credential writes before starting the next generation', async t => {
+    const saved = deferred();
+    const pairing = [];
+    const h = setup({ save: () => saved.promise, onPairing: event => { pairing.push(event); return true; } });
+    t.after(h.stop);
+    await h.start();
+    const socket = h.sockets[0];
+    socket.ev.emit('connection.update', { qr: 'fixture-qr' });
+    socket.ev.emit('creds.update');
+    socket.ev.emit('connection.update', { isNewLogin: true });
+    disconnect(socket, DisconnectReason.restartRequired);
+    await flush();
+    assert.equal(h.timeouts.size, 0);
+    assert.equal(h.sockets.length, 1);
+    saved.resolve();
+    await flush();
+    await h.nextTimeout();
+    assert.equal(h.sockets.length, 2);
+    assert.equal(h.counts.maxActive, 1);
+    assert.deepEqual(pairing, [{ qr: 'fixture-qr' }, { authenticated: true }]);
+    assert.doesNotMatch(JSON.stringify(h.logs), /fixture-qr/);
+});
 
 test('serializes initialization, fences old callbacks and reconnects with increasing delays', async t => {
     const gate = deferred();

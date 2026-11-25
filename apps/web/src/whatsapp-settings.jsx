@@ -95,7 +95,10 @@ export function WhatsAppSettings() {
         const version = ++sequence.current;
         try {
             const next = await api(base + '/state');
-            if (version === sequence.current) setData(next);
+            if (version === sequence.current) {
+                setNow(Date.now());
+                setData(next);
+            }
         } catch (err) {
             if (version === sequence.current) {
                 setData({ state: 'unavailable' });

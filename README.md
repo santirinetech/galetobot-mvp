@@ -40,6 +40,8 @@ O workflow publicado tem sufixos nos nomes dos nós e alterações manuais no pr
 
 O chat público e o Laboratório IA são opcionais e não dependem do Baileys. Consulte o [guia de atendimento multicanal](docs/atendimento-web.md) para configurar a demonstração isolada, homologar a integração e preparar o rollback.
 
+O perfil WhatsApp oferece vinculação, diagnóstico e controle da automação em **Configurações → Conexão WhatsApp**. Consulte o [guia da Central WhatsApp](docs/whatsapp-central.md) para preparar a instalação e proteger a sessão.
+
 | Caminho | Conteúdo |
 | --- | --- |
 | `apps/api/` | Node.js, Express, SQLite, Baileys, regras comerciais e testes |

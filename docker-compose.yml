@@ -22,6 +22,8 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:?Configure ADMIN_EMAIL}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Configure ADMIN_PASSWORD}
       WEBHOOK_TOKEN: ${WEBHOOK_TOKEN:?Configure WEBHOOK_TOKEN}
+      WHATSAPP_CONTROL_URL: http://whatsapp:3002
+      WHATSAPP_CONTROL_TOKEN: ${WHATSAPP_CONTROL_TOKEN:-}
       CHAT_MODE: ${CHAT_MODE:-off}
       CHAT_LAB_URL: ${CHAT_LAB_URL:-}
       CHAT_LAB_TOKEN: ${CHAT_LAB_TOKEN:-}
@@ -42,6 +44,7 @@ services:
       retries: 3
       start_period: 15s
     logging: *logs
+    networks: [default, whatsapp-control]
 
   web:
     image: galetobot-web:${RELEASE:-candidate}
@@ -68,18 +71,25 @@ services:
 
   whatsapp:
     profiles: [whatsapp]
-    image: galetobot-api:${RELEASE:-candidate}
-    restart: "no"
+    image: galetobot-whatsapp:${WHATSAPP_RELEASE:-candidate}
+    build:
+      context: .
+      target: whatsapp
+    restart: "on-failure:3"
     init: true
     stop_grace_period: 45s
     working_dir: /app/apps/api
     environment:
       N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-}
       N8N_WEBHOOK_TOKEN: ${N8N_WEBHOOK_TOKEN:-}
-      WHATSAPP_ALLOW_QR: "0"
+      WHATSAPP_CONTROL_TOKEN: ${WHATSAPP_CONTROL_TOKEN:-}
+      WHATSAPP_CONTROL_HOST: 0.0.0.0
+      WHATSAPP_CONTROL_PORT: "3002"
+      WHATSAPP_API_URL: http://api:3000
       WHATSAPP_DIAGNOSTICS: ${WHATSAPP_DIAGNOSTICS:-basic}
       WHATSAPP_PROTOCOL_MODE: ${WHATSAPP_PROTOCOL_MODE:-bundled}
-    command: ["sh", "-ec", "umask 077; test -s whatsapp-session/creds.json || { echo 'Sessão autorizada ausente'; exit 1; }; exec node src/whatsapp/connect.js"]
+    command: ["sh", "-ec", "umask 077; exec flock -n -F -E 73 whatsapp-session/.galeto-writer.lock node src/whatsapp/connect.js"]
+    networks: [whatsapp-control, whatsapp-egress]
     volumes:
       - type: bind
         source: ${WHATSAPP_SESSION_DIR:-./runtime/whatsapp-session}
@@ -87,3 +97,8 @@ services:
         bind:
           create_host_path: false
     logging: *logs
+
+networks:
+  whatsapp-control:
+    internal: true
+  whatsapp-egress: {}

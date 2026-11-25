@@ -86,6 +86,8 @@ test('fresh install waits for an explicit operation, rotates QR, expires it and 
 test('replacement requires confirmation and protected backup, cancellation restores old session', async t => {
     const old = credentials('5511900006789@s.whatsapp.net');
     const f = await fixture(t, old);
+    await f.manager.start();
+    assert.equal(f.sockets.length, 1);
     await assert.rejects(f.manager.command({ action: 'pair', replace: false }), { code: 'replacement_required' });
     await f.manager.command({ action: 'pair', replace: true });
     const backup = (await readdir(join(f.root, '.galeto'))).find(file => file.startsWith('backup-'));
@@ -115,4 +117,17 @@ test('invalid credentials are preserved, and an inconclusive unlink preserves th
     assert.equal(await f.vault.readActive(), null);
     assert.ok((await readdir(join(f.root, '.galeto'))).some(file => file.startsWith('backup-')));
     assert.equal(f.manager.state().state, 'disconnected');
+});
+
+test('open transport with stalled synchronization degrades, but completed synchronization stays healthy when idle', async t => {
+    const f = await fixture(t, credentials('5511900006789@s.whatsapp.net'));
+    const socket = f.sockets[0];
+    socket.log('socket_state', { state: 'open' });
+    assert.equal(f.manager.state().state, 'syncing');
+    f.advance(90_001);
+    assert.equal(f.manager.state().state, 'degraded');
+    socket.log('pending_notifications', { complete: true });
+    f.advance(24 * 60 * 60_000);
+    assert.equal(f.manager.state().state, 'connected');
+    assert.equal(f.manager.state().last_inbound, null);
 });

@@ -20,6 +20,12 @@ COPY scripts/deploy/ scripts/deploy/
 USER node
 CMD ["node", "apps/api/src/index.js", "--hosted"]
 
+FROM api AS whatsapp
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends util-linux \
+    && rm -rf /var/lib/apt/lists/*
+USER node
+
 FROM nginx:stable-alpine AS web
 RUN rm /etc/nginx/conf.d/default.conf
 COPY deploy/nginx.conf.template /etc/nginx/templates/default.conf.template
