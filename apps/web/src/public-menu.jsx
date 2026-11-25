@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api, money, statuses } from './client.js';
-import { ArrowDown, MessageCircle, Minus, Plus, ShoppingBag } from 'lucide-react';
-import { Badge, Brand, Dialog, Empty, Loading, Notice, ProductPhoto } from './ui.jsx';
+import { ArrowDown, Clock, MessageCircle, Minus, Moon, Plus, Search, ShoppingBag, Sun, Utensils } from 'lucide-react';
+import { ProductPhoto } from './ui.jsx';
+import { Button, Feedback, Overlay, Tag } from './design-system.jsx';
 import { Chat } from './chat.jsx';
 import { emptyPayment, PaymentFields, paymentPayload } from './payment-fields.jsx';
 
@@ -21,12 +22,18 @@ export function PublicMenu() {
     const [busy, setBusy] = useState(false);
     const [chatAvailable, setChatAvailable] = useState(false);
     const [chatOpen, setChatOpen] = useState(false);
+    const [query, setQuery] = useState('');
+    const [theme, setTheme] = useState(() => localStorage.getItem('galeto-menu-theme') === 'dark' ? 'dark' : 'light');
     const requesting = useRef(false);
 
     useEffect(() => {
         let active = true;
-        api('/chat/availability').then(data => { if (active) setChatAvailable(data.available === true); }).catch(() => {});
-        return () => { active = false; };
+        const refresh = () => api('/chat/availability')
+            .then(data => { if (active) setChatAvailable(data.available === true); })
+            .catch(() => { if (active) setChatAvailable(false); });
+        refresh();
+        const timer = setInterval(refresh, 15000);
+        return () => { active = false; clearInterval(timer); };
     }, []);
 
     useEffect(() => {
@@ -89,7 +96,7 @@ export function PublicMenu() {
             const items = Object.entries(cart).filter(([, count]) => count > 0)
                 .map(([id, quantity]) => ({ product_id: Number(id), quantity }));
             setQuote(await api('/menu/quote', {
-                method: 'POST', body: { ...customer, ...paymentPayload(payment), phone: customer.phone.replace(/\D/g, ''), items }
+                method: 'POST', body: { ...customer, fulfillment, ...paymentPayload(payment), phone: customer.phone.replace(/\D/g, ''), items }
             }));
         });
     }
@@ -118,18 +125,27 @@ export function PublicMenu() {
         });
     }
     const config = menu?.settings;
-    const categories = [...new Set((menu?.products ?? []).map(product => product.category || 'Cardápio'))];
+    const fulfillment = config?.pickup_enabled === false ? 'delivery' : customer.fulfillment;
+    const fold = value => value.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLocaleLowerCase('pt-BR');
+    const products = (menu?.products ?? []).filter(product =>
+        fold([product.name, product.category, product.description].join(' ')).includes(fold(query.trim())));
+    const categories = [...new Set(products.map(product => product.category || 'Cardápio'))];
     const count = Object.values(cart).reduce((sum, qty) => sum + qty, 0);
 
-    return <>
-        <header className="public-header"><Brand /><a className="button small secondary" href="/">Painel</a></header>
+    return <div className="ops-shell storefront" data-theme={theme} data-identity={config?.brand_theme}>
         <main className="container public-menu">
             <section className="menu-hero">
-                <h1>{config?.name || 'GaletoBot'}</h1>
-                <h2>Cardápio</h2>
-                {config?.hours && <p>{config.hours}</p>}
+                <Button variant="icon" icon={theme === 'dark' ? Sun : Moon} className="menu-theme"
+                    aria-label={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'} onClick={() => {
+                        const next = theme === 'dark' ? 'light' : 'dark';
+                        localStorage.setItem('galeto-menu-theme', next);
+                        setTheme(next);
+                    }} />
+                <div className="menu-identity">{config?.logo_url ? <img src={config.logo_url} alt="" /> : <Utensils aria-hidden="true" />}
+                    <div><h1>{config?.name || 'Cardápio'}</h1>
+                        {config?.hours && <p><Clock size={16} aria-hidden="true" /> {config.hours}</p>}</div></div>
                 {config?.menu_note && <p>{config.menu_note}</p>}
-                {config && <Badge tone={config.menu_open ? 'success' : 'warning'}>{config.menu_open ? 'Aceitando pedidos' : 'Pedidos fechados'}</Badge>}
+                {config && <Tag tone={config.menu_open ? 'success' : 'warn'}>{config.menu_open ? 'Aceitando pedidos' : 'Pedidos fechados'}</Tag>}
                 {chatAvailable && <div className="public-chat-entry">
                     <button type="button" onClick={() => setChatOpen(true)} disabled={Boolean(pending) || busy}>
                         <MessageCircle size={18} aria-hidden="true" /> Pedir com IA
@@ -137,12 +153,12 @@ export function PublicMenu() {
                     <small>Os carrinhos do cardápio e da conversa são separados.</small>
                 </div>}
             </section>
-            {chatOpen && <Dialog title="Pedir com IA" onClose={() => setChatOpen(false)}>
+            {chatOpen && <Overlay title="Pedir com IA" onClose={() => setChatOpen(false)}>
                 <Chat onContinue={() => setChatOpen(false)} />
-            </Dialog>}
-            {menuError && <Notice>{menuError}</Notice>}
-            {!menu && !menuError && <Loading>Carregando cardápio…</Loading>}
-            {error && <Notice>{error}</Notice>}
+            </Overlay>}
+            {menuError && <Feedback kind="error" title="Falha ao carregar o cardápio">{menuError}</Feedback>}
+            {!menu && !menuError && <Feedback kind="loading" title="Carregando cardápio…" />}
+            {error && <Feedback kind="error" title="Confira seu pedido">{error}</Feedback>}
             {pending && <section className="panel">
                 <p>A confirmação anterior ainda não retornou. Consulte o resultado antes de enviar outro pedido.</p>
                 <button disabled={busy} onClick={() => confirm(pending)}>Verificar confirmação</button>
@@ -155,6 +171,9 @@ export function PublicMenu() {
                     <p>{receipt.pix_instructions.notice}</p>
                 </div>}
             </section>}
+            {menu?.products.length > 0 && <label className="menu-search"><Search size={17} aria-hidden="true" />
+                <input type="search" aria-label="Buscar no cardápio" placeholder="Buscar no cardápio" value={query} onChange={event => setQuery(event.target.value)} />
+            </label>}
             {categories.length > 1 && <nav className="category-links" aria-label="Categorias">
                 {categories.map((category, index) => <a href={`#categoria-${index}`} key={category}>{category}</a>)}
             </nav>}
@@ -162,13 +181,13 @@ export function PublicMenu() {
             <div className="menu-categories">
             {categories.map((category, index) => <section className="menu-category" id={`categoria-${index}`} key={category}>
                 <h2>{category}</h2>
-                <div className="menu-grid">{menu.products.filter(p => (p.category || 'Cardápio') === category).map(product =>
+                <div className="menu-grid">{products.filter(p => (p.category || 'Cardápio') === category).map(product =>
                     <article key={product.id} className="panel menu-item">
                         <ProductPhoto url={product.image_url} name={product.name} className="menu-photo" />
                         <h3>{product.name}</h3>
                         {product.description && <p>{product.description}</p>}
                         <strong>{money(product.price_cents)}</strong>
-                        <Badge tone={product.stock ? 'success' : 'danger'}>{product.stock ? 'Disponível' : 'Esgotado'}</Badge>
+                        <Tag tone={product.stock ? 'success' : 'warn'}>{product.stock ? 'Disponível' : 'Esgotado'}</Tag>
                         <div className="qty">
                             <button type="button" className="secondary" aria-label={`Remover ${product.name}`} disabled={busy || !cart[product.id]} onClick={() => quantity(product, -1)}><Minus size={17} /></button>
                             <span>{cart[product.id] || 0}</span>
@@ -177,7 +196,7 @@ export function PublicMenu() {
                     </article>
                 )}</div>
             </section>)}
-            {menu && !menu.products.length && <section className="panel"><Empty>Nenhum produto no cardápio.</Empty></section>}
+            {menu && !products.length && <Feedback title={query ? 'Nenhum produto encontrado' : 'Nenhum produto no cardápio'} />}
             </div>
             {count > 0 && <section className="panel menu-cart" id="carrinho">
                 <h2><ShoppingBag size={21} /> Seu pedido · {count} {count === 1 ? 'item' : 'itens'}</h2>
@@ -192,11 +211,11 @@ export function PublicMenu() {
                     <fieldset disabled={busy}>
                         <label>Nome<input required maxLength={100} value={customer.name} onChange={e => update('name', e.target.value)} /></label>
                         <label>Telefone com DDD<input required type="tel" value={customer.phone} onChange={e => update('phone', e.target.value)} /></label>
-                        <label>Recebimento<select value={customer.fulfillment} onChange={e => update('fulfillment', e.target.value)}>
-                            <option value="pickup">Retirada</option>
+                        <label>Recebimento<select value={fulfillment} onChange={e => update('fulfillment', e.target.value)}>
+                            {config.pickup_enabled !== false && <option value="pickup">Retirada</option>}
                             {config.regions.length > 0 && <option value="delivery">Entrega</option>}
                         </select></label>
-                        {customer.fulfillment === 'delivery' && <>
+                        {fulfillment === 'delivery' && <>
                             <label>Região<select required value={customer.region} onChange={e => update('region', e.target.value)}>
                                 <option value="">Selecione</option>
                                 {config.regions.map(region => <option key={region.name}>{region.name}</option>)}
@@ -223,6 +242,7 @@ export function PublicMenu() {
             </section>}
             </div>
             {count > 0 && <a className="button accent cart-shortcut" href="#carrinho"><ShoppingBag size={18} /> Seu pedido · {count} {count === 1 ? 'item' : 'itens'} <ArrowDown size={17} /></a>}
+            <footer className="menu-footer"><a href="/">Área administrativa</a></footer>
         </main>
-    </>;
+    </div>;
 }

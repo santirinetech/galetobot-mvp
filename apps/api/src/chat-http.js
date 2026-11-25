@@ -60,6 +60,7 @@ export function createChatGateway(chat, config, { fetcher = fetch, webhookTimeou
     let concurrent = 0;
     let budgetUntil = 0;
     let used = 0;
+    let unavailableUntil = 0;
 
     async function send(row, data) {
         const reserved = chat.reserve(row, data.message_id, data.mensagem);
@@ -93,12 +94,15 @@ export function createChatGateway(chat, config, { fetcher = fetch, webhookTimeou
         const result = chat.result(row, data.message_id);
         if (result.status === 'failed') {
             const error = result.error;
+            if (reserved.created && ['timeout', 'integration_unavailable'].includes(error)) unavailableUntil = Date.now() + 30_000;
             throw new ChatError(error === 'timeout' ? 504 : 502, error, errorMessages[error]);
         }
+        if (reserved.created) unavailableUntil = 0;
         return chat.view(row);
     }
 
     return {
+        available: () => Date.now() >= unavailableUntil,
         create: (scope, owner) => chat.create(scope, owner),
         async act(scope, token, owner, operation, input) {
             const row = chat.session(token, scope, owner);
@@ -162,7 +166,7 @@ export function createChatRouters(chat, config, auth, csrf, options) {
     }
 
     boundary(publicChat, 75);
-    publicChat.get('/availability', (_req, res) => res.json({ available: true }));
+    publicChat.get('/availability', (_req, res) => res.json({ available: gateway.available() }));
     mount(publicChat, '/api/chat', 'web', () => null, local('web'));
     boundary(lab, 90);
     lab.use(auth);
