@@ -472,6 +472,20 @@ test('API HTTP isolada cobre regressões, erros seguros e reenvio após perda da
         assert.equal((await fetch(baseUrl + image)).status, 404);
         assert.equal((await storeRequest('/products/1/photo', { method: 'DELETE', admin: true })).url, '');
         assert.equal((await fetch(baseUrl + replacement)).status, 404);
+        const uploadLogo = await fetch(baseUrl + '/api/settings/logo', {
+            method: 'POST', headers: { ...panelHeaders, origin, 'content-type': 'image/png' }, body: png
+        });
+        assert.equal(uploadLogo.status, 201);
+        const { url: logo } = await uploadLogo.json();
+        await storeRequest('/settings', { method: 'PUT', body: { ...settings, brand_theme: 'carvao', pickup_enabled: false }, admin: true });
+        await storeRequest('/settings', { method: 'PUT', body: settings, admin: true });
+        const publicSettings = (await storeRequest('/menu')).settings;
+        assert.equal(publicSettings.logo_url, logo);
+        assert.equal(publicSettings.brand_theme, 'carvao');
+        assert.equal(publicSettings.pickup_enabled, false);
+        await storeRequest('/settings', { method: 'PUT', body: { ...settings, human_contact_url: 'http://example.invalid' }, admin: true, status: 400 });
+        await storeRequest('/settings/logo', { method: 'DELETE', admin: true });
+        assert.equal((await fetch(baseUrl + logo)).status, 404);
         const clients = await storeRequest('/customers?q=11900000042&sort=recent', { admin: true });
         assert.equal(clients.length, 1);
         assert.equal(clients[0].ordered_cents, 7200);

@@ -6,6 +6,7 @@
 .brasa-login-content > button { position: absolute; top: 18px; right: 18px; }
 .brasa-login-content form { width: min(100%, 370px); display: grid; gap: 14px; }
 .brasa-login-content form > a { color: var(--ds-action); justify-self: start; }
+.ops-operation-success { padding: 10px 14px; margin-bottom: 12px; background: var(--ds-positive-bg); color: var(--ds-positive); border-radius: var(--ds-control-radius); }
 .ops-shell .chat-workspace { border-color: var(--ds-border); border-radius: 9px; background: var(--ds-paper); color: var(--ds-text); }
 .ops-shell .chat-top, .ops-shell .chat-details { border-color: var(--ds-border); }
 .ops-shell .chat-details, .ops-shell .chat-history { background: var(--ds-soft); }
@@ -13,6 +14,13 @@
 .ops-shell .chat-customer { color: var(--ds-text); background: var(--ds-paper); border-inline-end: 3px solid var(--ds-action); }
 .ops-shell .chat-assistant, .ops-shell .chat-tabs button { color: var(--ds-text); background: var(--ds-paper); border-color: var(--ds-border); }
 .ops-shell .chat-tabs button[aria-pressed="true"] { color: var(--ds-text); box-shadow: inset 0 -2px var(--ds-action); }
+.ops-shell .chat-workspace button.secondary { background: var(--ds-paper); color: var(--ds-text); border-color: var(--ds-border); }
+.ops-shell .chat-workspace .chat-fallback, .ops-shell .chat-workspace a { color: var(--ds-action); }
+.ops-shell .chat-compose button { background: var(--ds-action); color: var(--ds-action-text); }
+.ops-shell .chat-workspace :focus-visible, .storefront :focus-visible {
+    outline: 2px solid var(--ds-focus);
+    outline-offset: 2px;
+}
 .chat-side-toggle { display: none; }
 .chat-detail-body dd { min-width: 0; overflow-wrap: anywhere; }
 .chat-lab .chat-history { height: clamp(300px, 49dvh, 650px); }
@@ -20,13 +28,13 @@
 .storefront .public-menu { max-width: 1180px; padding-top: clamp(12px, 3vw, 38px); padding-bottom: 84px; }
 .storefront .menu-hero { position: relative; padding: clamp(18px, 4vw, 46px); border-radius: 10px; background: #242020; color: #faf7f2; border-inline-start: 5px solid #ea580c; }
 .storefront[data-identity="carvao"] .menu-hero { background: #18181b; border-inline-start-color: #9c938c; }
-.storefront .menu-theme { position: absolute; top: 10px; right: 10px; }
+.storefront .menu-theme { position: absolute; top: 10px; right: 10px; color: #faf7f2; background: #3a302b; border-color: #786258; }
 .menu-identity { display: flex; align-items: center; gap: 14px; padding-inline-end: 35px; }
 .menu-identity h1 { font-size: clamp(1.55rem, 4vw, 2.8rem); overflow-wrap: anywhere; }
 .menu-identity p { display: flex; align-items: center; gap: 6px; }
-.menu-identity > :is(img, svg) { width: clamp(42px, 9vw, 84px); aspect-ratio: 1; object-fit: contain; flex: none; }
+.menu-identity > :is(img, svg) { width: clamp(42px, 9vw, 84px); height: clamp(42px, 9vw, 84px); object-fit: contain; flex: none; }
 .menu-identity > svg { padding: 10px; border: 1px solid #6b5448; border-radius: 8px; }
-.storefront .public-chat-entry button, .storefront .qty button:not(.secondary), .storefront .menu-cart button:not(.secondary) { background: var(--ds-action); color: var(--ds-on-action, white); }
+.storefront .public-chat-entry button, .storefront .qty button:not(.secondary), .storefront .menu-cart button:not(.secondary) { background: var(--ds-action); color: var(--ds-action-text); }
 .menu-search { display: flex; align-items: center; gap: 8px; max-width: 480px; padding: 10px 0; color: var(--ds-muted); }
 .storefront .menu-search input { margin: 0; }
 .storefront .category-links a { background: var(--ds-paper); color: var(--ds-text); border: 1px solid var(--ds-border); }
@@ -38,7 +46,7 @@
 .storefront .checkout-summary { margin-top: 10px; }
 .storefront .menu-footer { padding: 22px 0; border-top: 1px solid var(--ds-border); margin-top: 24px; }
 .storefront .menu-footer a { color: var(--ds-muted); }
-.storefront .cart-shortcut { background: var(--ds-action); color: var(--ds-on-action, white); }
+.storefront .cart-shortcut { background: var(--ds-action); color: var(--ds-action-text); }
 .storefront .ds-overlay:has(.chat-workspace) { width: min(calc(100% - 14px), 900px); max-height: calc(100dvh - 14px); }
 @media (max-width: 680px) {
     .brasa-login { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
@@ -53,3 +61,6 @@
     .storefront .menu-item .qty { justify-content: space-between; }
     .storefront .ds-overlay:has(.chat-workspace) .ds-overlay-body { padding: 8px; }
 }
+
+.storefront .menu-identity h1, .storefront .menu-category h2 { font-family: var(--ds-heading); }
+.storefront input, .storefront select, .storefront textarea, .chat-workspace textarea { background: var(--ds-paper); color: var(--ds-text); border-color: var(--ds-border); }

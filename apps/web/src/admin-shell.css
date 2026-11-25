@@ -5,7 +5,6 @@
 .ops-top-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .ops-shell .ops-quick-order { display: none; }
 .ops-shell .ops-main { padding-inline: clamp(16px, 2.7vw, 44px); }
-.ops-shell .ops-legacy { color-scheme: light; color: var(--ink); background: var(--canvas); font-family: "Segoe UI", system-ui, sans-serif; }
 .ops-overflow-nav { display: grid; gap: 4px; }
 .ops-nav-button {
     justify-content: flex-start; color: inherit; background: transparent; font-size: .87rem;

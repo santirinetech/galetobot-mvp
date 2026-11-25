@@ -129,7 +129,7 @@ export function Products({ products, action, refresh, busy, error }) {
             if (!draft.price.trim() || !Number.isSafeInteger(price) || price < 0) throw new Error('Informe um preço válido.');
             const { name, description, category, active, image_url } = draft;
             const body = { name, description, category, active: Boolean(active), price_cents: price };
-            if (!file && !remove && image_url && !image_url.startsWith('/api/media/')) body.image_url = image_url;
+            if (!file && !remove && !image_url.startsWith('/api/media/')) body.image_url = image_url;
             let id = editing;
             if (id) await api('/products/' + id, { method: 'PATCH', body });
             else {

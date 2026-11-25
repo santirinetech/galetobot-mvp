@@ -35,10 +35,13 @@ test('web gateway uses original contract, verifies local callback, and recovers 
     });
     const token = gateway.create('web');
     const send = (mensagem, message_id = randomUUID()) => gateway.act('web', token, null, 'send', { mensagem, message_id });
+    assert.equal(gateway.available(), true);
     await assert.rejects(send('Quero galeto'), { status: 504 });
+    assert.equal(gateway.available(), false);
     assert.throws(() => chat.context(blocked), { code: 'turn_expired' });
     execute = true;
     await send('Quero galeto');
+    assert.equal(gateway.available(), true);
     for (const text of ['retirada', 'nome Teste', 'telefone 11900000000', 'Pix']) await send(text);
     const messageId = randomUUID();
     const confirmed = await send('1', messageId);
@@ -58,4 +61,17 @@ test('chat config defaults off and requires a distinct isolated lab credential',
     assert.throws(() => readChatConfig({ ...options, N8N_WEBHOOK_URL: 'https://n8n.example.invalid/webhook-test/test' }));
     assert.equal(readChatConfig({ ...options, CHAT_MODE: 'commercial', CHAT_LAB_URL: 'https://demo.example.invalid',
         CHAT_LAB_TOKEN: 'x'.repeat(32) }).lab.hostname, 'demo.example.invalid');
+});
+
+test('a model-only failure leaves deterministic chat available', async () => {
+    const gateway = createChatGateway({
+        session: () => ({ id: 'fixture' }),
+        reserve: () => ({ created: true, turn: {} }),
+        fail: () => {},
+        result: () => ({ status: 'failed', error: 'model_unavailable' })
+    }, readChatConfig(options), { fetcher: async () => new Response(null, { status: 200 }) });
+    await assert.rejects(gateway.act('web', 'fixture', null, 'send', {
+        message_id: randomUUID(), mensagem: 'Uma mensagem'
+    }), { code: 'model_unavailable' });
+    assert.equal(gateway.available(), true);
 });

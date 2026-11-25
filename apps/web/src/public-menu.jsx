@@ -125,7 +125,8 @@ export function PublicMenu() {
         });
     }
     const config = menu?.settings;
-    const fulfillment = config?.pickup_enabled === false ? 'delivery' : customer.fulfillment;
+    const fulfillment = config?.pickup_enabled === false ? 'delivery' :
+        config?.regions.length ? customer.fulfillment : 'pickup';
     const fold = value => value.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLocaleLowerCase('pt-BR');
     const products = (menu?.products ?? []).filter(product =>
         fold([product.name, product.category, product.description].join(' ')).includes(fold(query.trim())));

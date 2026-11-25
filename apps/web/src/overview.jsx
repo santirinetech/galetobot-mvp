@@ -31,6 +31,10 @@ export function Dashboard({ data, orders, navigate }) {
                 <Metric title="Recebimentos registrados" value={received == null ? '—' : <Amount cents={received} />}
                     note={received == null ? 'Informação indisponível' : `${data.received_today} pagamentos registrados hoje`} icon={Wallet} tone="positive" />
             </section>
+            {(data.orders_pending_payment > 0 || data.orders_without_payment > 0) && <div className="overview-finance-note">
+                <Tag tone="warn">{data.orders_pending_payment} aguardam recebimento</Tag>
+                <span>{data.orders_without_payment} sem registro financeiro entre os pedidos de hoje</span>
+            </div>}
             <div className="overview-columns">
                 <Surface title="Pedidos recentes" className="overview-recent"
                     actions={<Button icon={ArrowRight} variant="quiet" onClick={() => navigate('pedidos')}>Ver pedidos</Button>}>
@@ -60,9 +64,6 @@ export function Dashboard({ data, orders, navigate }) {
                     </Surface>
                 </div>
             </div>
-            {(data.orders_pending_payment > 0 || data.orders_without_payment > 0) && <p className="overview-finance-note">
-                Dos pedidos de hoje, {data.orders_pending_payment} aguardam recebimento e {data.orders_without_payment} estão sem registro financeiro.
-            </p>}
         </>}
     </div>;
 }

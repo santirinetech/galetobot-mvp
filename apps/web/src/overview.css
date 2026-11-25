@@ -27,7 +27,7 @@
 .overview-channels li { padding-block: 9px; }
 .overview-bar { display: block; height: 5px; border-radius: 5px; margin-top: 7px; background: var(--ds-soft); overflow: hidden; }
 .overview-bar i { display: block; height: 100%; background: var(--ds-action); border-radius: inherit; }
-.overview-finance-note { color: var(--ds-muted); margin: 12px 0 0; font-size: .79rem; }
+.overview-finance-note { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; color: var(--ds-muted); margin: 12px 0; font-size: .79rem; }
 @container (min-width: 840px) {
     .overview-metrics { grid-template-columns: repeat(4,minmax(0,1fr)); }
     .overview-columns { grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); }

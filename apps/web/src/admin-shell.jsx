@@ -26,11 +26,10 @@ function save(key, value) {
     try { localStorage.setItem(key, value); } catch { /* Browser may disable storage. */ }
 }
 
-export function AdminShell({ tab, navigate, logout, storeName, busy, pilot, children }) {
+export function AdminShell({ tab, navigate, logout, storeName, busy, children }) {
     const [theme, setTheme] = useState(() => read('galeto-theme', 'light') === 'dark' ? 'dark' : 'light');
     const [collapsed, setCollapsed] = useState(() => read('galeto-sidebar', 'wide') === 'compact');
     const [menu, setMenu] = useState(false);
-    const sectionTitle = tabs.find(([id]) => id === tab)[1];
 
     function select(id) { setMenu(false); navigate(id); }
     function navigation([id, label, Icon], compact = false) {
@@ -88,8 +87,7 @@ export function AdminShell({ tab, navigate, logout, storeName, busy, pilot, chil
                 <Button variant="quiet" icon={LogOut} onClick={() => { setMenu(false); logout(); }}>Sair da conta</Button>
             </nav>
         </Overlay>}
-        <main className={'container admin-main ops-main' + (pilot ? '' : ' ops-legacy')} aria-busy={busy}>
-            {!pilot && <div className="page-heading"><h1>{sectionTitle}</h1></div>}
+        <main className="container admin-main ops-main" aria-busy={busy}>
             {children}
         </main>
     </div>;

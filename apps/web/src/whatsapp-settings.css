@@ -1,4 +1,9 @@
 .wa-settings { --wa-charcoal: var(--ds-text); --wa-cream: var(--ds-soft); --wa-orange: var(--ds-action); margin-top: 16px; color: var(--wa-charcoal); }
+.ops-shell .wa-settings.panel { background: var(--ds-paper); border-color: var(--ds-border); box-shadow: var(--ds-shadow); margin-top: 16px; }
+.ops-shell .wa-settings button.secondary { color: var(--ds-text); background: var(--ds-soft); border-color: var(--ds-border); }
+.ops-shell .wa-settings .badge { color: var(--ds-neutral); background: var(--ds-neutral-bg); }
+.ops-shell .wa-settings .badge.success { color: var(--ds-positive); background: var(--ds-positive-bg); }
+.ops-shell .wa-settings .badge.warning { color: var(--ds-warn); background: var(--ds-warn-bg); }
 .wa-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .wa-heading h2 { display: flex; gap: 8px; align-items: center; margin: 0; }
 .wa-heading p { margin: 7px 0; color: var(--ds-muted); }
@@ -8,7 +13,7 @@
 .wa-facts dt { font-size: .82rem; color: var(--ds-muted); }
 .wa-facts dd { font-weight: 650; margin: 4px 0 0; overflow-wrap: anywhere; }
 .wa-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-button.wa-primary { background: var(--wa-orange, var(--ds-action)); color: white; }
+button.wa-primary { background: var(--wa-orange); color: var(--ds-action-text); }
 button.wa-primary:hover:not(:disabled) { background: var(--ds-action); }
 .wa-qr { margin: 16px 0; background: var(--wa-cream); padding: 12px; text-align: center; }
 .wa-qr img { display: block; width: min(230px, 100%); margin: 0 auto 8px; }

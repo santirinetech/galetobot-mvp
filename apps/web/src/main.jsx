@@ -11,7 +11,6 @@ import { Customers, Settings, Stock } from './admin-sections.jsx';
 import { PublicMenu } from './public-menu.jsx';
 import { Chat } from './chat.jsx';
 import { emptyPayment, paymentPayload } from './payment-fields.jsx';
-import { Notice } from './ui.jsx';
 import './style.css';
 import './experiences.css';
 
@@ -178,15 +177,11 @@ function App() {
                 setTab('dashboard');
         });
     }
-    const pilot = true;
-    return <AdminShell {...{ tab, navigate, logout, storeName, busy, pilot }}>
-            {syncError && (pilot
-                ? <Feedback kind="error" title="Falha ao carregar a operação" onRetry={refresh}>{syncError}</Feedback>
-                : <Notice onRetry={refresh}>{syncError}</Notice>)}
-            {error && <Notice>{error}</Notice>}
-            {success && <Notice kind="success">{success}</Notice>}
-            {!dashboard && !syncError && (pilot ? <Feedback kind="loading" title="Carregando operação…" /> :
-                <Loading>Carregando operação…</Loading>)}
+    return <AdminShell {...{ tab, navigate, logout, storeName, busy }}>
+            {syncError && <Feedback kind="error" title="Falha ao carregar a operação" onRetry={refresh}>{syncError}</Feedback>}
+            {error && <Feedback kind="error" title="Operação não concluída">{error}</Feedback>}
+            {success && <div role="status" className="ops-operation-success">{success}</div>}
+            {!dashboard && !syncError && <Feedback kind="loading" title="Carregando operação…" />}
             {tab === 'dashboard' && <Dashboard data={dashboard} orders={orders} navigate={navigate} />}
             {tab === 'pedidos' && <Orders {...{ orders, refresh, action, busy, error }} ready={Boolean(dashboard)} />}
             {tab === 'produtos' && dashboard && <Products {...{ products, refresh, action, busy, error }} />}
