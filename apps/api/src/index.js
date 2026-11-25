@@ -102,7 +102,12 @@ app.get('/api/integrations/products', integrationAuth, (_req, res) => {
     `).all();
     res.json(products);
 });
-app.get('/api/orders', auth, (_req, res) => res.json(db.prepare(`SELECT o.*,c.name customer_name,c.phone FROM orders o LEFT JOIN customers c ON c.id=o.customer_id ORDER BY o.id DESC LIMIT 100`).all()));
+const orderList = db.prepare(`SELECT o.*,c.name customer_name,c.phone
+    ${enableStore ? ',p.status AS payment_status,p.method AS payment_method' : ''}
+    FROM orders o LEFT JOIN customers c ON c.id=o.customer_id
+    ${enableStore ? 'LEFT JOIN order_payments p ON p.order_id=o.id' : ''}
+    ORDER BY o.id DESC LIMIT 100`);
+app.get('/api/orders', auth, (_req, res) => res.json(orderList.all()));
 const productSchema = productFields.extend({ stock: z.number().int().min(0) }).partial({
     description: true, category: true, image_url: true, active: true
 });

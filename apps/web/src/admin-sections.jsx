@@ -1,6 +1,6 @@
 ﻿import React, { useCallback, useEffect, useState } from 'react';
 import { ArrowDownLeft, ArrowRight, ArrowUpRight, Package, Pencil, Plus, RefreshCw, Search } from 'lucide-react';
-import { api, money, nextStatus, sources, statuses } from './client.js';
+import { api, money, sources, statuses } from './client.js';
 import { Badge, Dialog, Empty, formatDate, Loading, Notice, OrderStatus, ProductPhoto } from './ui.jsx';
 import { WhatsAppSettings } from './whatsapp-settings.jsx';
 
@@ -30,66 +30,6 @@ function StockLevel({ stock }) {
     return <Badge tone={stock === 0 ? 'danger' : stock <= 2 ? 'warning' : 'success'}>
         {stock === 0 ? 'Esgotado' : stock <= 2 ? 'Estoque baixo' : 'Em estoque'}
     </Badge>;
-}
-
-export function Orders({ orders, refresh, action, busy, error }) {
-    const [details, setDetails] = useState(null);
-    const [filter, setFilter] = useState('all');
-    const visible = filter === 'all' ? orders : orders.filter(order => order.status === filter);
-    async function open(id) { setDetails(await api(`/orders/${id}`)); }
-
-    return <>
-        <section className="panel">
-            <PanelHeading title="Todos os pedidos"><button className="secondary small" onClick={() => action(refresh)}><RefreshCw size={16} /> Atualizar</button></PanelHeading>
-            <div className="filters" aria-label="Filtrar pedidos">
-                {[['all', 'Todos'], ...Object.entries(statuses)].map(([id, label]) => <button key={id} type="button" aria-pressed={id === filter} onClick={() => setFilter(id)}>{label}</button>)}
-            </div>
-            {!visible.length ? <Empty>Nenhum pedido neste filtro.</Empty> : <div className="orders-table">
-                <div className="orders-head" aria-hidden="true"><span>Pedido / Cliente</span><span>Origem</span><span>Horário</span><span>Status</span><span>Total</span><span>Detalhes</span></div>
-                {visible.map(order => <article className={'order-row ' + (order.status === 'pending' ? 'pending-order' : '')} key={order.id}>
-                    <div className="order-client"><small>#{order.id}{order.status === 'pending' && <span className="new-dot" aria-label="Pendente" />}</small><strong>{order.customer_name || 'Cliente'}</strong></div>
-                    <span className="order-source">{source(order)}</span>
-                    <span className="order-time">{formatDate(order.created_at)}</span>
-                    <OrderStatus status={order.status} />
-                    <strong className="order-total">{money(order.total_cents)}</strong>
-                    <button className="secondary small order-action" aria-label={`Ver pedido ${order.id}`} onClick={() => action(() => open(order.id))}>Detalhes <ArrowRight size={15} /></button>
-                </article>)}
-            </div>}
-        </section>
-        {details && <Dialog title={`Pedido #${details.id}`} onClose={() => setDetails(null)}>
-            {error && <Notice>{error}</Notice>}
-            <div className="detail-bar"><OrderStatus status={details.status} /><span>{source(details)} · {formatDate(details.created_at)}</span></div>
-            <dl className="details-grid">
-                <div><dt>Cliente</dt><dd>{details.details?.name || details.customer_name || '—'}</dd></div>
-                <div><dt>Telefone</dt><dd>{details.phone || '—'}</dd></div>
-                <div><dt>Recebimento</dt><dd>{details.details ? details.details.fulfillment === 'delivery' ? `Entrega · ${details.details.address}, ${details.details.region}` : 'Retirada' : 'Não informado'}</dd></div>
-                <div><dt>Pagamento</dt><dd>{details.payment?.method || details.details?.payment || 'Não informado'}</dd></div>
-                <div><dt>Situação do pagamento</dt><dd>{details.payment?.status === 'received' ? 'Recebido' :
-                    details.payment ? 'Aguardando recebimento' : 'Sem registro de pagamento'}</dd></div>
-                {details.payment?.cash_tendered_cents != null && <div><dt>Valor entregue</dt>
-                    <dd>{money(details.payment.cash_tendered_cents)}</dd></div>}
-                {details.payment?.change_cents != null && <div><dt>Troco</dt><dd>{money(details.payment.change_cents)}</dd></div>}
-            </dl>
-            <h3>Itens</h3>
-            {details.items.map(item => <div key={item.id} className="product"><span>{item.quantity} × {item.name}</span><strong>{money(item.quantity * item.unit_price_cents)}</strong></div>)}
-            {details.details && <p className="total"><span>Frete</span><span>{money(details.details.shipping_cents)}</span></p>}
-            <p className="total"><strong>Total</strong><strong>{money(details.total_cents)}</strong></p>
-            {details.pix_instructions && <p>Chave Pix <strong>{details.pix_instructions.key}</strong></p>}
-            {details.payment?.method.toLowerCase() === 'pix' && details.payment.status === 'pending' &&
-                <button className="secondary full" disabled={busy} onClick={() => {
-                    if (!window.confirm('Você conferiu o recebimento deste Pix?')) return;
-                    action(async () => {
-                        await api(`/orders/${details.id}/payment`, { method: 'PATCH', body: { status: 'received' } });
-                        await open(details.id);
-                    }, 'Recebimento do Pix registrado.');
-                }}>Registrar Pix recebido</button>}
-            {nextStatus[details.status] && <button className="full" disabled={busy} onClick={() => action(async () => {
-                await api(`/orders/${details.id}/status`, { method: 'PATCH', body: { status: nextStatus[details.status] } });
-                await open(details.id);
-                await refresh();
-            }, 'Status atualizado.')}>Marcar como {statuses[nextStatus[details.status]].toLowerCase()}</button>}
-        </Dialog>}
-    </>;
 }
 
 export function Products({ products, action, refresh, busy, error }) {

@@ -1,11 +1,11 @@
 ﻿import React from 'react';
 import { ArrowRight, Boxes, CalendarDays, ClipboardList, Clock3, Plus, Receipt, Wallet } from 'lucide-react';
 import { Amount, Button, Feedback, PageHeading, Surface, Tag } from './design-system.jsx';
-import { sources, statuses } from './client.js';
+import { sources } from './client.js';
+import { OrderTag } from './order-tags.jsx';
 import { formatDate } from './ui.jsx';
 import './overview.css';
 
-const tones = { pending: 'warn', confirmed: 'info', preparing: 'accent', ready: 'success', completed: 'neutral' };
 const date = () => new Intl.DateTimeFormat('pt-BR', { dateStyle: 'full', timeZone: 'America/Sao_Paulo' }).format(new Date());
 
 function Metric({ title, value, note, icon: Icon, tone }) {
@@ -39,7 +39,7 @@ export function Dashboard({ data, orders, navigate }) {
                             <div className="overview-order-name"><strong>{order.customer_name || 'Cliente'}</strong>
                                 <small>#{order.id} · {sources[order.source] || 'Origem desconhecida'} · {formatDate(order.created_at, { timeStyle: 'short' })}</small>
                             </div>
-                            <Tag tone={tones[order.status]}>{statuses[order.status] || order.status}</Tag>
+                            <OrderTag status={order.status} />
                             <strong><Amount cents={order.total_cents} /></strong>
                         </li>)}</ul>}
                 </Surface>

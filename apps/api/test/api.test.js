@@ -196,6 +196,8 @@ test('API HTTP isolada cobre regressões, erros seguros e reenvio após perda da
         assert.deepEqual(two, one);
         const orders = await storeRequest('/orders', { admin: true });
         assert.deepEqual(orders.map(row => row.source), ['site', 'whatsapp', 'whatsapp-simulated', 'counter']);
+        assert.deepEqual(orders.map(row => row.payment_status), ['pending', 'pending', null, null]);
+        assert.equal(orders[0].payment_method, 'Pix');
         assert.equal(db.prepare('SELECT stock FROM products WHERE id=1').pluck().get(), 5);
         assert.equal(db.prepare('SELECT COUNT(*) FROM stock_movements WHERE product_id=1 AND reason=?').pluck().get('Venda'), 3);
         await storeRequest('/orders/4/status', { method: 'PATCH', admin: true, body: { status: 'confirmed' } });

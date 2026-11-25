@@ -2,9 +2,10 @@
 import { createRoot } from 'react-dom/client';
 import { AdminShell } from './admin-shell.jsx';
 import { Dashboard } from './overview.jsx';
+import { Orders } from './orders-pilot.jsx';
 import { Feedback } from './design-system.jsx';
 import { api, money } from './client.js';
-import { Customers, Orders, Products, Settings, Stock } from './admin-sections.jsx';
+import { Customers, Products, Settings, Stock } from './admin-sections.jsx';
 import { PublicMenu } from './public-menu.jsx';
 import { Chat } from './chat.jsx';
 import { emptyPayment, PaymentFields, paymentPayload } from './payment-fields.jsx';
@@ -168,15 +169,16 @@ function App() {
                 setTab('dashboard');
         });
     }
-    return <AdminShell {...{ tab, navigate, logout, storeName, busy }} pilot={tab === 'dashboard'}>
-            {syncError && (tab === 'dashboard'
+    const pilot = tab === 'dashboard' || tab === 'pedidos';
+    return <AdminShell {...{ tab, navigate, logout, storeName, busy, pilot }}>
+            {syncError && (pilot
                 ? <Feedback kind="error" title="Falha ao carregar a opera??o" onRetry={refresh}>{syncError}</Feedback>
                 : <Notice onRetry={refresh}>{syncError}</Notice>)}
             {error && <Notice>{error}</Notice>}
             {success && <Notice kind="success">{success}</Notice>}
             {!dashboard && !syncError && <Loading>Carregando operação…</Loading>}
             {tab === 'dashboard' && <Dashboard data={dashboard} orders={orders} navigate={navigate} />}
-            {tab === 'pedidos' && dashboard && <Orders {...{ orders, refresh, action, busy, error }} />}
+            {tab === 'pedidos' && <Orders {...{ orders, refresh, action, busy, error }} ready={Boolean(dashboard)} />}
             {tab === 'produtos' && dashboard && <Products {...{ products, refresh, action, busy, error }} />}
             {tab === 'estoque' && dashboard && <Stock {...{ products, refresh, action, busy, error }} />}
             {tab === 'clientes' && <Customers action={action} />}
