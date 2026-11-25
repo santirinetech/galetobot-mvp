@@ -1,29 +1,39 @@
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import dotenv from 'dotenv';
+import express from 'express';
 import makeWASocket, {
-    DEFAULT_CONNECTION_CONFIG, DisconnectReason, useMultiFileAuthState
+    DEFAULT_CONNECTION_CONFIG, DisconnectReason, S_WHATSAPP_NET, useMultiFileAuthState
 } from '@whiskeysockets/baileys';
+import { controlToken, createWhatsAppControl } from '../whatsapp-control.js';
 import { createBaileysLogger } from './diagnostics.js';
 import { createMessageHandler } from './messages.js';
+import { qrLifetime } from './pairing-qr.js';
+import { createSessionManager } from './session-manager.js';
+import { createSessionVault } from './session-vault.js';
 import { createSupervisor } from './supervisor.js';
 
 dotenv.config({ path: new URL('../../../../.env', import.meta.url) });
+process.umask(0o077);
 
 const webhook = process.env.N8N_WEBHOOK_URL;
 const token = process.env.N8N_WEBHOOK_TOKEN;
 const protocol = process.env.WHATSAPP_PROTOCOL_MODE ?? 'bundled';
 const diagnostics = process.env.WHATSAPP_DIAGNOSTICS ?? 'basic';
-const session = './whatsapp-session';
+const session = process.env.WHATSAPP_SESSION_PATH ?? './whatsapp-session';
+const management = controlToken(process.env);
+const managementPort = Number(process.env.WHATSAPP_CONTROL_PORT ?? 3002);
+if (process.env.WHATSAPP_CONTROL_TOKEN && !management) throw new Error('Credencial de controle invalida.');
 
-if (!webhook || !token) throw new Error('Configure N8N_WEBHOOK_URL e N8N_WEBHOOK_TOKEN.');
+if ((!webhook || !token) && !management) throw new Error('Configure N8N_WEBHOOK_URL e N8N_WEBHOOK_TOKEN.');
 let target;
-try {
-    target = new URL(webhook);
-} catch {
-    throw new Error('N8N_WEBHOOK_URL invalida.');
-}
-if (!['http:', 'https:'].includes(target.protocol) || target.pathname.includes('/webhook-test/')) {
-    throw new Error('Configure a URL HTTP(S) de producao do webhook.');
+if (webhook && token) {
+    target = URL.parse(webhook);
+    if (!target || !['http:', 'https:'].includes(target.protocol) || target.pathname.includes('/webhook-test/') ||
+        target.username || target.password) {
+        if (!management) throw new Error('Configure a URL HTTP(S) de producao do webhook.');
+        target = null;
+    }
 }
 if (!['bundled', 'queried'].includes(protocol) || !['basic', 'detailed'].includes(diagnostics)) {
     throw new Error('Configuracao de diagnostico ou protocolo invalida.');
@@ -35,17 +45,44 @@ function log(event, fields) {
     console.log(JSON.stringify({ component: 'whatsapp', event, ...fields }));
 }
 
-const supervisor = createSupervisor({
-    log, reasons: DisconnectReason,
-    fail: () => { process.exitCode = 1; },
+const processMessages = createMessageHandler(async ({ jid, id, text, signal, emit }) => {
+    if (!target) throw new Error('Webhook indisponivel.');
+    emit('webhook_request');
+    const response = await fetch(target, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { 'Content-Type': 'application/json', 'X-GaletoBot-Token': token },
+        body: JSON.stringify({ session_id: jid, mensagem: text, message_id: id }),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(15000)])
+    });
+    emit('webhook_response', { status: response.status });
+    if (!response.ok) {
+        await response.body?.cancel().catch(() => {});
+        throw new Error('Webhook rejeitado.');
+    }
+    const data = await response.json();
+    if (data?.suprimir_resposta === true && data.resposta === '') return null;
+    if (typeof data?.resposta !== 'string' || !data.resposta.trim()) throw new Error('Resposta invalida.');
+    return data.resposta;
+});
+
+function makeSupervisor({ directory, allowPairing = false, onPairing, log: record = log }) {
+    return createSupervisor({
+    log: record, reasons: DisconnectReason, onPairing, processMessages,
+    connectMs: allowPairing ? 300_000 : undefined,
+    fail: () => { if (!management) process.exitCode = 1; },
     async open({ persist, emit, signal }) {
         // Validate before the Baileys helper, which treats an unreadable file as absent.
         let auth;
         try {
-            const stored = JSON.parse(await readFile(`${session}/creds.json`, 'utf8'));
-            if (!stored?.me?.id) throw new Error('Sessao invalida.');
-            auth = await useMultiFileAuthState(session);
-            if (auth.state.creds.me?.id !== stored.me.id) throw new Error('Sessao indisponivel.');
+            const file = await readFile(join(directory, 'creds.json'), 'utf8').catch(error => {
+                if (allowPairing && error.code === 'ENOENT') return null;
+                throw error;
+            });
+            const stored = file === null ? null : JSON.parse(file);
+            if (file !== null && !stored?.me?.id) throw new Error('Sessao invalida.');
+            auth = await useMultiFileAuthState(directory);
+            if (stored && auth.state.creds.me?.id !== stored.me.id) throw new Error('Sessao indisponivel.');
         } catch {
             emit('auth_load_failed');
             throw new Error('Sessao indisponivel.');
@@ -77,7 +114,7 @@ const supervisor = createSupervisor({
         const logger = createBaileysLogger((event, fields) => {
             if (!signal.aborted) emit(event, fields);
         }, diagnostics);
-        const socket = makeWASocket({ version, auth: state, logger });
+        const socket = makeWASocket({ version, auth: state, logger, qrTimeout: qrLifetime });
         return {
             ev: socket.ev, ws: socket.ws, saveCredentials,
             async end() {
@@ -86,31 +123,36 @@ const supervisor = createSupervisor({
                     await new Promise(resolve => socket.ws.once('close', resolve));
                 }
             },
+            async confirmUnlink() {
+                const jid = state.creds.me?.id;
+                if (!jid) return false;
+                const result = await socket.query({
+                    tag: 'iq', attrs: { to: S_WHATSAPP_NET, type: 'set', xmlns: 'md' },
+                    content: [{ tag: 'remove-companion-device', attrs: { jid, reason: 'user_initiated' } }]
+                }, 4000);
+                return result?.tag === 'iq' && result.attrs?.type === 'result';
+            },
             sendMessage: (...args) => socket.sendMessage(...args)
         };
-    },
-    processMessages: createMessageHandler(async ({ jid, id, text, signal, emit }) => {
-        emit('webhook_request');
-        const response = await fetch(target, {
-            method: 'POST',
-            redirect: 'manual',
-            headers: { 'Content-Type': 'application/json', 'X-GaletoBot-Token': token },
-            body: JSON.stringify({ session_id: jid, mensagem: text, message_id: id }),
-            signal: AbortSignal.any([signal, AbortSignal.timeout(15000)])
-        });
-        emit('webhook_response', { status: response.status });
-        if (!response.ok) {
-            await response.body?.cancel().catch(() => {});
-            throw new Error('Webhook rejeitado.');
-        }
-        const data = await response.json();
-        if (data?.suprimir_resposta === true && data.resposta === '') return null;
-        if (typeof data?.resposta !== 'string' || !data.resposta.trim()) throw new Error('Resposta invalida.');
-        return data.resposta;
-    })
-});
-
-for (const signal of ['SIGINT', 'SIGTERM']) {
-    process.on(signal, () => { void supervisor.stop(); });
+    }
+    });
 }
-void supervisor.start();
+
+let shutdown;
+for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.on(signal, () => { void shutdown?.().catch(() => { process.exitCode = 1; }); });
+}
+if (management) {
+    const manager = createSessionManager({ vault: createSessionVault(session), makeSupervisor, log });
+    const app = express();
+    app.disable('x-powered-by');
+    app.use(createWhatsAppControl(manager, management));
+    let server, stopping = false;
+    shutdown = async () => { stopping = true; server?.close(); await manager.shutdown(); };
+    await manager.start();
+    if (!stopping) server = app.listen(managementPort, process.env.WHATSAPP_CONTROL_HOST ?? '127.0.0.1');
+} else {
+    const supervisor = makeSupervisor({ directory: session });
+    shutdown = supervisor.stop;
+    await supervisor.start();
+}

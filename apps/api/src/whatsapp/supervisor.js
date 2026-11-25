@@ -2,7 +2,7 @@ const settle = tasks => Promise.allSettled([...tasks]);
 
 export function createSupervisor({ open, processMessages, log, fail, reasons,
     retryLimit = 6, stableMs = 300_000, connectMs = 45_000, reportMs = 30_000,
-    random = Math.random, clock = globalThis, now = Date.now }) {
+    random = Math.random, clock = globalThis, now = Date.now, onPairing }) {
     let current;
     let transition;
     let retry;
@@ -61,8 +61,9 @@ export function createSupervisor({ open, processMessages, log, fail, reasons,
 
             track(ev, 'connection.update', update => {
                 if (!active()) return;
+                if (update.isNewLogin) onPairing?.({ authenticated: true });
                 if (update.qr) {
-                    void close(context, 'pairing_required');
+                    if (onPairing?.({ qr: update.qr }) !== true) void close(context, 'pairing_required');
                     return;
                 }
                 if (update.connection === 'close') {
@@ -178,6 +179,7 @@ export function createSupervisor({ open, processMessages, log, fail, reasons,
             context.emit('socket_teardown_failed');
             stopping = true;
             fail();
+            return false;
         });
         return context.closing;
     }
@@ -186,8 +188,15 @@ export function createSupervisor({ open, processMessages, log, fail, reasons,
         stopping = true;
         clock.clearTimeout(retry);
         retry = undefined;
-        return current ? close(current, 'shutdown', undefined, true) : Promise.resolve();
+        return current ? close(current, 'shutdown', undefined, true).then(result => result !== false) : Promise.resolve(true);
     }
 
-    return { start, stop };
+    async function flushWrites() {
+        const context = current;
+        if (!context?.accepting) return false;
+        await settle(context.writes);
+        return context.accepting && !context.authFailed;
+    }
+
+    return { start, stop, flushWrites, unlink: () => current?.accepting && current.socket?.confirmUnlink?.() };
 }
