@@ -1,12 +1,19 @@
-# Evidências do pedido WhatsApp
+﻿# Evidências de homologação
 
-As capturas foram produzidas pela equipe. Coloque aqui cópias anonimizadas. Guarde os originais em armazenamento privado fora do Git.
+As capturas abaixo registram a homologação informada do Chat Web 2.0 e a interface de uma etapa anterior. Os arquivos receberam tarjas opacas nas regiões com dados pessoais e identificadores privados. Valores, quantidades e respostas técnicas visíveis foram preservados.
 
-| Pasta | Arquivos recomendados |
+| Evidência | Captura |
 | --- | --- |
-| [WhatsApp](whatsapp/) | `01-conversa-pedido.png`, `02-resumo-e-confirmacao.png` |
-| [n8n](n8n/) | `01-workflow-completo.png`, `02-execucao-pedido.png`, `03-prompt-gemini.png`, `04-saida-gemini.png`, `05-resposta-json.png` |
-| [Painel](painel/) | `01-pedido-whatsapp-pendente.png` |
-| [Estoque](estoque/) | `01-estoque-antes.png`, `02-estoque-depois.png`, `03-movimentacoes.png` |
+| Confirmação no Laboratório IA | [Pedido confirmado](../screenshots/01-pedido-confirmado.png) |
+| Resposta do Gemini | [Resposta JSON](../screenshots/02-gemini-resposta-json.png) |
+| Pedido no painel | [Pedido registrado](../screenshots/03-pedido-registrado.png) |
+| Baixa automática | [Movimentações de estoque](../screenshots/04-baixa-automatica-estoque.png) |
+| Execução completa | [Workflow executado](../screenshots/05-workflow-executado.png) |
+| Interpretação dos produtos | [Ações retornadas pelo Gemini](../screenshots/06-gemini-interpretacao-produtos.png) |
+| Normalização JSON | [Tratamento JavaScript](../screenshots/07-tratamento-javascript.png) |
+| API de conversas | [Retorno HTTP 200](../screenshots/08-api-conversas-http-200.png) |
+| Webhook | [Resposta do webhook](../screenshots/09-resposta-webhook.png) |
+| Cardápio histórico | [Desktop](../screenshots/cardapio-desktop.png) · [Mobile](../screenshots/cardapio-mobile.png) |
+| Painel histórico | [Desktop](../screenshots/painel-desktop.png) · [Mobile](../screenshots/painel-mobile.png) |
 
-Apague de forma irreversível nome, telefone, endereço, foto de perfil, identificadores de sessão, mensagem e cliente, código de confirmação, credenciais, chaves Pix, tokens e URLs privadas. Examine abas, cabeçalhos, QR codes, detalhes de execução, metadados e notificações. Exporte uma imagem achatada e inspecione a cópia final. Preserve itens, valores, frete, contagens e status quando autorizados.
+Os arquivos originais permanecem em `private-local/screenshots-originais/`, diretório ignorado pelo Git. As capturas históricas apresentam uma versão da interface anterior ao design Brasa aprovado.

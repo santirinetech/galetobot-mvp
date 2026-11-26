@@ -1,5 +1,7 @@
 # Etapa 3 · Atendimento comercial
 
+Para a entrega KODIE 2.0, consulte o [export atualizado](galetobot-kodie-demo-2.0.json). Ele requer configuração de URLs e credenciais próprias antes da ativação. O arquivo descrito abaixo permanece como referência histórica.
+
 O [workflow sanitizado](galetobot-kodie-gemini-ia.json) deriva do export **GaletoBot - KODIE - Gemini IA**. Ele preserva os cinco nós originais e acrescenta decisões de encaminhamento, a chamada à API de conversas e um nó para devolver o status HTTP correto. O export vem inativo, com URLs de exemplo, sem credenciais e sem dados fixados de execuções.
 
 ## Atualizar o workflow já validado

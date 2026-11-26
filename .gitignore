@@ -35,6 +35,7 @@ Thumbs.db
 # Backups locais do banco
 backups-local/
 private-local/
+*.commercial-private
 runtime/
 creds.json
 *.pem
